@@ -1,2 +1,3 @@
 # TFG-Terremotos
-Repositorio para la realización del trabajo de fin de grado, vamos a estudiar primeramente el modelo de la pila de arena. (renovar conforme se avance en el TFG).
+Repositorio para la realización del trabajo de fin de grado, vamos a estudiar primeramente el modelo de la pila de arena. (renovar conforme se avance en el TFG). También vamos a estudiar los modelos de criticidad auto-organizada, la corteza terrestre se organiza sola hasta un estado inestable.
+El modelo de pila de arena consiste en ir añadiendo granos en una cuadrícula de manera aleatoria, cuando los granos lleguen a 4 se reparten en las casillas de arriba, abajo, izquierda y derecha, las condiciones de contorno son disipativas es decir las que salgan fuera de la cuadrícula desaparecen.
