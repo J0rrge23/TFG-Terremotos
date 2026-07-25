@@ -8,54 +8,54 @@ import random
 import matplotlib.pyplot as plt
 import numpy as np
 
-# --- CONFIGURACIÓN DE LA SIMULACIÓN ---
+# =====================================================================
+# 1. CONFIGURACIÓN DE LA SIMULACIÓN
+# =====================================================================
 N = 30                 # Tamaño de la cuadrícula (30x30 = 900 casillas)
-pasos = 10000          # Número de pasos de tiempo
+pasos = 30000          # Número de pasos de tiempo (aumentado para mejor estadística)
 cuadricula = [[0 for _ in range(N)] for _ in range(N)]  # Inicializar con ceros
 
-# --- VARIABLES DE CONTROL OPTIMIZADAS ---
-total_particulas = 0   # Rastreador O(1) del número total de granos en la red
-sitios_criticos = 0    # Rastreador O(1) de las casillas con exactamente 3 granos
+# --- VARIABLES DE CONTROL OPTIMIZADAS O(1) ---
+total_particulas = 0   # Contador global de granos en la red
+sitios_criticos = 0    # Contador de casillas con exactamente 3 granos
 
 # --- LISTAS PARA ALMACENAR MÉTRICAS ---
 lista_carga_media = []
-lista_tamaño_avalancha = []  # Mide la criticidad dinámica (desbordes por paso)
-lista_sitios_criticos = []   # Mide cuántas casillas quedaron con exactamente 3 granos
+lista_tamano_avalancha = []  # Desbordes por paso
+lista_sitios_criticos = []   # Casillas con 3 granos por paso
 
-# --- BUCLE PRINCIPAL DE TIEMPO ---
+# =====================================================================
+# 2. BUCLE PRINCIPAL DE TIEMPO (Pila de Arena BTW)
+# =====================================================================
 for t in range(pasos):
-    # 1. Seleccionar una casilla aleatoria e incrementar su valor
-    x = random.randint(0, N-1)
-    y = random.randint(0, N-1)
+    # Seleccionar una casilla aleatoria e incrementar su valor
+    x = random.randint(0, N - 1)
+    y = random.randint(0, N - 1)
     
     val_antiguo = cuadricula[x][y]
     cuadricula[x][y] += 1
-    total_particulas += 1     # Incremento en el contador global
+    total_particulas += 1
     
-    # Actualización O(1) de sitios críticos (valor igual a 3)
+    # Actualización O(1) del estado de sitio crítico (h = 3)
     if val_antiguo == 3:
         sitios_criticos -= 1
     elif cuadricula[x][y] == 3:
         sitios_criticos += 1
     
-    # 2. Resolver desbordes (avalanchas) en cadena
+    # Resolver desbordes (avalanchas) en cadena
     pila_inestables = []
     if cuadricula[x][y] >= 4:
         pila_inestables.append((x, y))
         
     desbordes_este_paso = 0
     
-    # Mientras existan casillas inestables, la avalancha continúa
     while pila_inestables:
         cx, cy = pila_inestables.pop()
         
-        # Verificamos de nuevo que siga inestable
         if cuadricula[cx][cy] >= 4:
-            # La casilla se desborda: pierde 4 granos
             cuadricula[cx][cy] -= 4
             desbordes_este_paso += 1
             
-            # Si su nuevo valor tras perder 4 granos es 3, sumamos uno
             if cuadricula[cx][cy] == 3:
                 sitios_criticos += 1
             
@@ -63,160 +63,288 @@ for t in range(pasos):
             for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                 nx, ny = cx + dx, cy + dy
                 
-                # Si está dentro de los límites, recibe el grano
                 if 0 <= nx < N and 0 <= ny < N:
                     val_antiguo_vecino = cuadricula[nx][ny]
                     cuadricula[nx][ny] += 1
                     
-                    # Actualización O(1) de sitios críticos para el vecino
                     if val_antiguo_vecino == 3:
                         sitios_criticos -= 1
                     elif cuadricula[nx][ny] == 3:
                         sitios_criticos += 1
                     
-                    # Si este vecino ahora es inestable, se añade a la pila para colapsar
                     if cuadricula[nx][ny] >= 4:
                         pila_inestables.append((nx, ny))
                 else:
-                    # Si se sale del borde, se disipa (se pierde) y se resta del total
+                    # Se pierde por el borde (disipación)
                     total_particulas -= 1
 
-    # 3. MEDICIÓN DE MÉTRICAS (al finalizar la avalancha del paso 't')
+    # Registro de métricas tras completar la avalancha
     carga_media = total_particulas / (N * N)
     lista_carga_media.append(carga_media)
-    lista_tamaño_avalancha.append(desbordes_este_paso)
+    lista_tamano_avalancha.append(desbordes_este_paso)
     lista_sitios_criticos.append(sitios_criticos)
 
-# --- FIN DE LA SIMULACIÓN ---
 print(
     f"Simulación finalizada tras {pasos} pasos.\n"
     f"Carga media final: {lista_carga_media[-1]:.4f}\n"
-    f"Sitios críticos al final: {lista_sitios_criticos[-1]} de {N*N} ({(lista_sitios_criticos[-1]/(N*N))*100:.1f}%)\n"
-    f"Número de desbordes totales: {sum(lista_tamaño_avalancha)}\n"
+    f"Sitios críticos al final: {lista_sitios_criticos[-1]} de {N*N}\n"
+    f"Desbordes totales: {sum(lista_tamano_avalancha)}\n"
 )
 
-
 # =====================================================================
-# RECORTE DE ZONAS DE INTERÉS
+# 3. FILTRADO DEL ESTADO ESTACIONARIO (SOC)
 # =====================================================================
+inicio_estacionario = int(pasos * 0.3)  # Descarta el primer 30% (transitorio)
 
-# Definimos el inicio del estado estacionario (descartamos el primer 30% del transitorio)
-inicio_estacionario = int(pasos * 0.3)
-
-# 1. Ajuste de datos para la serie temporal
 tiempo_interes = np.arange(inicio_estacionario, pasos)
 carga_interes = lista_carga_media[inicio_estacionario:]
 criticos_interes = lista_sitios_criticos[inicio_estacionario:]
 
-# 2. Ajuste de datos para la Ley de Potencias
-avalanchas_estacionarias = lista_tamaño_avalancha[inicio_estacionario:]
+avalanchas_estacionarias = lista_tamano_avalancha[inicio_estacionario:]
 avalanchas_filtradas = [s for s in avalanchas_estacionarias if s > 0]
 
-
 # =====================================================================
-# GRÁFICOS 1 & 2: EVOLUCIÓN EN EL ESTADO ESTACIONARIO (SOC)
+# 4. FIGURA 1: EVOLUCIÓN TEMPORAL EN EQUILIBRIO
 # =====================================================================
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 8), sharex=True)
-fig.suptitle(f"Análisis en el Estado Estacionario (SOC) — Pasos {inicio_estacionario} a {pasos}", 
-             fontsize=14, fontweight='bold')
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
+fig.suptitle(f"Evolución en el Estado Estacionario (SOC) — Pasos {inicio_estacionario} a {pasos}", 
+             fontsize=13, fontweight='bold')
 
-# Gráfico 1: Carga Media en la zona de interés
-ax1.plot(tiempo_interes, carga_interes, color='teal', lw=1.2, label='Carga Media Activa')
-ax1.axhline(17/8, color='crimson', linestyle='--', lw=1.5, label='Límite Teórico Infinito (2.125)')
+# Carga Media
+ax1.plot(tiempo_interes, carga_interes, color='teal', lw=1, label='Carga Media Activa')
+ax1.axhline(17/8, color='crimson', linestyle='--', lw=1.5, label=r'Límite Teórico $N \to \infty$ (2.125)')
 ax1.set_ylabel('Carga Media\n(partículas / casilla)', fontsize=10)
-ax1.set_title('1. Fluctuaciones de la Carga Media en Equilibrio', fontsize=11, loc='left')
+ax1.set_title('1. Fluctuaciones de la Carga Media', fontsize=11, loc='left')
 ax1.grid(True, linestyle=':', alpha=0.6)
 ax1.legend(loc='upper right')
-
-# Optimizar escala vertical para apreciar las microfluctuaciones de la carga
 ax1.set_ylim(min(carga_interes) * 0.98, max(carga_interes) * 1.02)
 
-# Gráfico 2: Sitios Críticos en la zona de interés
-ax2.plot(tiempo_interes, criticos_interes, color='darkorange', lw=1, alpha=0.8, label='Sitios Críticos (h = 3)')
+# Sitios Críticos
+ax2.plot(tiempo_interes, criticos_interes, color='darkorange', lw=0.8, alpha=0.8, label=r'Sitios Críticos ($h = 3$)')
 ax2.set_xlabel('Paso de tiempo (t)', fontsize=11)
 ax2.set_ylabel('Nº de Sitios Críticos', fontsize=10)
-ax2.set_title('2. Densidad de Sitios Críticos (Estado de Alerta)', fontsize=11, loc='left')
+ax2.set_title('2. Densidad de Sitios Críticos', fontsize=11, loc='left')
 ax2.grid(True, linestyle=':', alpha=0.6)
 ax2.legend(loc='upper right')
-
-# Optimizar escala vertical para los sitios críticos
-ax2.set_ylim(min(criticos_interes) * 0.9, max(criticos_interes) * 1.1)
 
 plt.tight_layout()
 plt.show()
 
-
 # =====================================================================
-# GRÁFICO 3: LEY DE POTENCIAS EN LA ZONA DE ESCALA (SCALING REGION)
+# 5. FIGURA 2: MARGINAL $P(S)$ VS. EXCEDENCIA $P(S \geq s)$
 # =====================================================================
 if len(avalanchas_filtradas) > 10:
-    max_s = max(avalanchas_filtradas)
-    num_bins = 20  
-    bins_log = np.logspace(0, np.log10(max_s), num_bins)
+    s_datos = np.array(avalanchas_filtradas)
     
-    # Calcular Histograma y Densidad de Probabilidad (PDF)
-    conteos, bordes_bins = np.histogram(avalanchas_filtradas, bins=bins_log)
+    # Rango de ajuste de la Zona de Escala (Scaling Region)
+    s_min = 2
+    s_max = (N * N) / 4
+
+    # -----------------------------------------------------------------
+    # A) DISTRIBUCIÓN DE EXCEDENCIA (CCDF / P(S >= s))
+    # -----------------------------------------------------------------
+    s_ordenados = np.sort(s_datos)
+    n_avalanchas = len(s_ordenados)
+    ccdf_empirica = 1.0 - (np.arange(n_avalanchas) / n_avalanchas)
+
+    s_unicos, indices = np.unique(s_ordenados, return_index=True)
+    ccdf_unica = ccdf_empirica[indices]
+
+    mascara_ccdf = (s_unicos >= s_min) & (s_unicos <= s_max)
+    log_x_ccdf = np.log10(s_unicos[mascara_ccdf])
+    log_y_ccdf = np.log10(ccdf_unica[mascara_ccdf])
+
+    p_ccdf, int_ccdf = np.polyfit(log_x_ccdf, log_y_ccdf, 1)
+    beta = -p_ccdf           
+    tau_desde_ccdf = beta + 1 
+
+    # -----------------------------------------------------------------
+    # B) DISTRIBUCIÓN MARGINAL (PDF / P(S))
+    # -----------------------------------------------------------------
+    num_bins = 20
+    bins_log = np.logspace(0, np.log10(max(s_datos)), num_bins)
+    conteos, bordes_bins = np.histogram(s_datos, bins=bins_log)
     centros_bins = np.sqrt(bordes_bins[:-1] * bordes_bins[1:])
     anchos_bins = np.diff(bordes_bins)
+    
     pdf = conteos / (sum(conteos) * anchos_bins)
+    mascara_pdf = pdf > 0
     
-    mascara = pdf > 0
-    x_datos = centros_bins[mascara]
-    y_datos = pdf[mascara]
+    x_pdf = centros_bins[mascara_pdf]
+    y_pdf = pdf[mascara_pdf]
+
+    mascara_ajuste_pdf = (x_pdf >= s_min) & (x_pdf <= s_max)
+    p_pdf, int_pdf = np.polyfit(np.log10(x_pdf[mascara_ajuste_pdf]), 
+                                np.log10(y_pdf[mascara_ajuste_pdf]), 1)
+    tau_pdf = -p_pdf
+
+    # -----------------------------------------------------------------
+    # C) GRÁFICO COMPARATIVO
+    # -----------------------------------------------------------------
+    fig, (ax_pdf, ax_ccdf) = plt.subplots(1, 2, figsize=(13, 5.5))
+    fig.suptitle('Estudio de Avalanchas: Distribución Marginal vs. Excedencia', 
+                 fontsize=13, fontweight='bold')
+
+    # Panel Izquierdo: PDF Marginal
+    ax_pdf.scatter(x_pdf, y_pdf, color='teal', edgecolor='k', s=35, alpha=0.8, label='Datos (Binned PDF)')
+    x_linea = np.logspace(np.log10(s_min), np.log10(s_max), 100)
+    y_linea_pdf = 10**int_pdf * x_linea**(-tau_pdf)
+    ax_pdf.plot(x_linea, y_linea_pdf, 'r--', lw=2, label=fr'Ajuste PDF ($\tau \approx {tau_pdf:.2f}$)')
     
-    # Límites rigurosos de la "Zona de Interés de Escala" (Scaling Region)
-    # Evitamos S = 1 (discreto) y S > N*N/4 (efecto de borde / tamaño finito)
-    x_min_interes = 2
-    x_max_interes = (N * N) / 4
+    ax_pdf.set_xscale('log')
+    ax_pdf.set_yscale('log')
+    ax_pdf.set_xlabel('Tamaño de Avalancha ($S$)', fontsize=11)
+    ax_pdf.set_ylabel(r'Densidad de Probabilidad $P(S)$', fontsize=11)
+    ax_pdf.set_title(r'Distribución Marginal $P(S)$', fontsize=12)
+    ax_pdf.grid(True, which="both", linestyle=':', alpha=0.5)
+    ax_pdf.legend(fontsize=10)
+
+    # Panel Derecho: CCDF Excedencia (Corregidos comandos LaTeX)
+    ax_ccdf.scatter(s_unicos, ccdf_unica, color='darkorange', s=15, alpha=0.6, label='Empírica CCDF')
+    y_linea_ccdf = 10**int_ccdf * x_linea**(-beta)
+    ax_ccdf.plot(x_linea, y_linea_ccdf, 'navy', lw=2, linestyle='--', 
+                 label=fr'Ajuste CCDF ($\beta = {beta:.2f} \Rightarrow \tau = {tau_desde_ccdf:.2f}$)')
     
-    rango_ajuste = (x_datos >= x_min_interes) & (x_datos <= x_max_interes)
-    
-    if sum(rango_ajuste) > 2:
-        log_x = np.log10(x_datos)
-        log_y = np.log10(y_datos)
-        pendiente, interseccion = np.polyfit(log_x[rango_ajuste], log_y[rango_ajuste], 1)
-        tau = -pendiente
-        print(f"--> Exponente crítico hallado en la zona de escala (tau): {tau:.3f}")
-    else:
-        pendiente, interseccion = None, None
-        print("No hay suficientes datos en la zona de escala para ajustar.")
-    
-    # --- Gráfico de la Ley de Potencias enfocado en la Zona de Interés ---
-    plt.figure(figsize=(8, 6))
-    
-    # Pintar todos los datos con opacidad baja
-    plt.scatter(x_datos, y_datos, color='gray', edgecolor='none', s=40, alpha=0.3, label='Fuera de Escala')
-    
-    # Destacar los puntos que pertenecen estrictamente a la Zona de Interés
-    plt.scatter(x_datos[rango_ajuste], y_datos[rango_ajuste], color='darkorange', 
-                edgecolor='black', s=65, zorder=3, label='Zona de Interés (Escala Limpia)')
-    
-    # Pintar la recta de ajuste
-    if pendiente is not None:
-        x_ajuste = np.logspace(np.log10(x_min_interes), np.log10(x_max_interes), 100)
-        y_ajuste = 10**interseccion * x_ajuste**pendiente
-        plt.plot(x_ajuste, y_ajuste, color='navy', linestyle='--', lw=2.5, 
-                 label=f'Ajuste Teórico ($\\tau$ = {tau:.2f})')
-    
-    plt.xscale('log')
-    plt.yscale('log')
-    plt.xlabel('Tamaño de la Avalancha ($S$)', fontsize=12)
-    plt.ylabel('Densidad de Probabilidad $P(S)$', fontsize=12)
-    plt.title('Distribución de Avalanchas: Foco en la Zona de Escala', fontsize=13, fontweight='bold')
-    
-    # --- ACERCAMIENTO VISUAL (ZOOM) A LA ZONA DE INTERÉS ---
-    # Centramos el eje X desde 1 hasta el límite superior de escala (con un margen dinámico)
-    plt.xlim(0.9, x_max_interes * 1.5)
-    
-    # Ajustamos el eje Y para omitir el vacío de los datos dispersos del final
-    y_interes_valores = y_datos[rango_ajuste]
-    if len(y_interes_valores) > 0:
-        plt.ylim(min(y_interes_valores) * 0.5, max(y_datos) * 2)
-        
-    plt.grid(True, which="both", linestyle=':', alpha=0.5)
-    plt.legend(fontsize=10, loc='upper right')
+    ax_ccdf.set_xscale('log')
+    ax_ccdf.set_yscale('log')
+    ax_ccdf.set_xlabel('Tamaño de Avalancha ($S$)', fontsize=11)
+    ax_ccdf.set_ylabel(r'Probabilidad de Excedencia $P(S \geq s)$', fontsize=11)
+    ax_ccdf.set_title(r'Distribución de Excedencia (CCDF)', fontsize=12)
+    ax_ccdf.grid(True, which="both", linestyle=':', alpha=0.5)
+    ax_ccdf.legend(fontsize=10)
+
     plt.tight_layout()
     plt.show()
 
-else:
-    print("No se registraron suficientes avalanchas para realizar la estadística.")
+def calcular_tau_mle(datos_avalanchas, s_min, s_max=None):
+    """
+    Método 1: MÁXIMA VEROSIMILITUD (MLE / Estimador de Aki-Utsu)
+    Es el método estadísticamente más riguroso (libre de sesgos por binning).
+    """
+    datos = np.array(datos_avalanchas)
+    
+    # Filtrar datos en la región de escala
+    if s_max is not None:
+        muestra = datos[(datos >= s_min) & (datos <= s_max)]
+    else:
+        muestra = datos[datos >= s_min]
+        
+    n = len(muestra)
+    if n == 0:
+        return None, None
+    
+    # Corrección continua para datos discretos (s_min - 0.5)
+    suma_log = np.sum(np.log(muestra / (s_min - 0.5)))
+    tau_mle = 1.0 + n / suma_log
+    
+    # Error estándar de la estimación
+    error_mle = (tau_mle - 1.0) / np.sqrt(n)
+    
+    return tau_mle, error_mle
+
+
+def calcular_tau_ols_pdf(datos_avalanchas, s_min, s_max, num_bins=20):
+    """
+    Método 2: MÍNIMOS CUADRADOS EN HISTOGRAMA LOGARÍTMICO (PDF)
+    Ajuste lineal directo sobre log10(P(S)) vs log10(S).
+    """
+    datos = np.array(datos_avalanchas)
+    bins_log = np.logspace(np.log10(min(datos)), np.log10(max(datos)), num_bins)
+    
+    conteos, bordes = np.histogram(datos, bins=bins_log)
+    centros = np.sqrt(bordes[:-1] * bordes[1:])
+    anchos = np.diff(bordes)
+    
+    pdf = conteos / (sum(conteos) * anchos)
+    
+    # Máscara para la región de escala
+    mascara = (centros >= s_min) & (centros <= s_max) & (pdf > 0)
+    
+    log_x = np.log10(centros[mascara])
+    log_y = np.log10(pdf[mascara])
+    
+    # Ajuste lineal y_log = -tau * x_log + C
+    pendiente, interseccion = np.polyfit(log_x, log_y, 1)
+    tau_pdf = -pendiente
+    
+    return tau_pdf, centros[mascara], pdf[mascara], interseccion
+
+
+def calcular_tau_ols_ccdf(datos_avalanchas, s_min, s_max):
+    """
+    Método 3: MÍNIMOS CUADRADOS EN DISTRIBUCIÓN DE EXCEDENCIA (CCDF)
+    Ajuste sobre P(S >= s). Recupera tau mediante: tau = beta + 1.
+    """
+    datos = np.sort(np.array(datos_avalanchas))
+    n = len(datos)
+    ccdf = 1.0 - (np.arange(n) / n)
+    
+    s_unicos, idx = np.unique(datos, return_index=True)
+    ccdf_unica = ccdf[idx]
+    
+    mascara = (s_unicos >= s_min) & (s_unicos <= s_max)
+    
+    log_x = np.log10(s_unicos[mascara])
+    log_y = np.log10(ccdf_unica[mascara])
+    
+    pendiente, interseccion = np.polyfit(log_x, log_y, 1)
+    beta = -pendiente
+    tau_ccdf = beta + 1.0
+    
+    return tau_ccdf, beta, s_unicos[mascara], ccdf_unica[mascara]
+
+
+# =====================================================================
+# EJECUCIÓN Y EXTRACCIÓN CON TUS DATOS DE SIMULACIÓN
+# =====================================================================
+
+# Parámetros para la zona de escala limpia
+s_min_ajuste = 2
+s_max_ajuste = (N * N) / 4   # Límite superior por tamaño finito (225 en red 30x30)
+
+# 1. Obtener valores de tau
+tau_mle, error_mle = calcular_tau_mle(avalanchas_filtradas, s_min_ajuste, s_max_ajuste)
+tau_pdf, x_puntos, y_puntos, int_pdf = calcular_tau_ols_pdf(avalanchas_filtradas, s_min_ajuste, s_max_ajuste)
+tau_ccdf, beta_ccdf, x_ccdf, y_ccdf = calcular_tau_ols_ccdf(avalanchas_filtradas, s_min_ajuste, s_max_ajuste)
+
+# 2. Mostrar reporte por consola
+print("\n" + "="*55)
+print("     REPORTE DE OBTENCIÓN DEL EXPONENTE CRÍTICO (tau)")
+print("="*55)
+print(f"Rango de ajuste empleado: S_min = {s_min_ajuste}, S_max = {s_max_ajuste:.1f}")
+print("-" * 55)
+print(f"1. Máxima Verosimilitud (MLE / Aki-Utsu) : tau = {tau_mle:.3f} +/- {error_mle:.3f}")
+print(f"2. Mínimos Cuadrados en PDF Marginal     : tau = {tau_pdf:.3f}")
+print(f"3. Mínimos Cuadrados en Excedencia (CCDF): tau = {tau_ccdf:.3f}  (beta = {beta_ccdf:.3f})")
+print("="*55 + "\n")
+
+# =====================================================================
+# REPRESENTACIÓN GRÁFICA COMPARATIVA
+# =====================================================================
+
+x_linea = np.logspace(np.log10(s_min_ajuste), np.log10(s_max_ajuste), 100)
+
+plt.figure(figsize=(8, 6))
+
+# Puntos empíricos (PDF)
+plt.scatter(x_puntos, y_puntos, color='darkorange', edgecolor='black', s=60, 
+            zorder=3, label='Datos ($P(S)$ binned)')
+
+# Recta 1: Ajuste OLS PDF
+plt.plot(x_linea, 10**int_pdf * x_linea**(-tau_pdf), color='navy', linestyle='--', lw=2,
+         label=fr'Ajuste OLS PDF ($\tau = {tau_pdf:.2f}$)')
+
+# Recta 2: Recta Teórica MLE trazada desde la misma constante
+C_mle = 10**int_pdf
+plt.plot(x_linea, C_mle * x_linea**(-tau_mle), color='crimson', linestyle='-', lw=2,
+         label=fr'Estimador MLE ($\tau = {tau_mle:.2f} \pm {error_mle:.2f}$)')
+
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('Tamaño de Avalancha ($S$)', fontsize=11)
+plt.ylabel(r'Densidad de Probabilidad $P(S)$', fontsize=11)
+plt.title('Comparación de Métodos para la Obtención de $\tau$', fontsize=12, fontweight='bold')
+plt.grid(True, which="both", linestyle=':', alpha=0.5)
+plt.legend(fontsize=10)
+plt.tight_layout()
+plt.show()
