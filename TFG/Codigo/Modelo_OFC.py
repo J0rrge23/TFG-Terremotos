@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import powerlaw
 
 # 1. CONFIGURACIÓN GENERAL
-N = 300                 # Cuadrícula de 200x200
+N = 150                # Cuadrícula de 200x200
 pasos = 30000          # Pasos por simulación
 F_th = 1.0             # Umbral de ruptura
 lista_alphas = [0.15, 0.20, 0.23, 0.245]  # Lista de alphas a evaluar (< 0.25)

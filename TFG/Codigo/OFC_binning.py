@@ -43,7 +43,7 @@ def simular_ofc(N, alpha, pasos=12000, seed=42):
 # ---------------------------------------------------------------------
 # 2. PARÁMETROS GENERALES DE LA EXPLORACIÓN
 # ---------------------------------------------------------------------
-redes_N = [40, 80, 120]                   # Lista de tamaños N a evaluar
+redes_N = [300,350,400]                   # Lista de tamaños N a evaluar
 alphas_10 = np.linspace(0.05, 0.245, 10)  # 10 valores de alpha
 pasos_sim = 12000
 transitorio = int(pasos_sim * 0.3)
