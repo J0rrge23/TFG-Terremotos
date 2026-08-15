@@ -10,7 +10,7 @@ import warnings
 warnings.filterwarnings('ignore') # Ignorar avisos de convergencia de powerlaw
 
 # --- 1. CONFIGURACIÓN DEL BARRIDO ---
-N = 40                           # Tamaña de la red NxN
+N = 100                         # Tamaña de la red NxN
 pasos = 25000                    # Pasos de tiempo por simulación
 F_th = 1.0                       # Umbral de ruptura
 alphas = np.linspace(0.15, 0.24, 10) # 10 valores de alpha de 0.15 a 0.24
