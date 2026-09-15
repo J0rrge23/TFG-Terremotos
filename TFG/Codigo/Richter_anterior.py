@@ -1,10 +1,11 @@
+
 import numpy as np
 import matplotlib.pyplot as plt
 
-# =====================================================================
-# 1. FUNCIÓN DE SIMULACIÓN BASE (MODELO OFC)
-# =====================================================================
-def simular_ofc(N, alpha, pasos=50000, seed=42):
+# ---------------------------------------------------------------------
+# 1. FUNCIÓN DE SIMULACIÓN BASE
+# ---------------------------------------------------------------------
+def simular_ofc(N, alpha, pasos=12000, seed=42):
     np.random.seed(seed)
     F_th = 1.0
     cuadricula = np.random.uniform(0, F_th, (N, N))
@@ -37,18 +38,18 @@ def simular_ofc(N, alpha, pasos=50000, seed=42):
         
     return lista_tamaños
 
-# =====================================================================
+# ---------------------------------------------------------------------
 # 2. PARÁMETROS GENERALES DE LA EXPLORACIÓN
-# =====================================================================
-redes_N = [100,150,200,250,350,400]                   # Tamaños de red N a evaluar
+# ---------------------------------------------------------------------
+redes_N = [300,350,400]                   # Lista de tamaños N a evaluar
 alphas_10 = np.linspace(0.05, 0.245, 10)  # 10 valores de alpha
-pasos_sim = 50000                         # Incrementado para estabilizar el régimen crítico
+pasos_sim = 12000
 transitorio = int(pasos_sim * 0.3)
 ventana_t = 30
 
-# =====================================================================
+# ---------------------------------------------------------------------
 # 3. BUCLE PRINCIPAL: SIMULACIÓN Y GENERACIÓN DE GRÁFICAS POR CADA N
-# =====================================================================
+# ---------------------------------------------------------------------
 for N in redes_N:
     print(f"\n==========================================")
     print(f"   EJECUTANDO SIMULACIONES PARA N = {N}")
@@ -79,6 +80,7 @@ for N in redes_N:
     # -----------------------------------------------------------------
     # FIGURA A (Específica para N): BINNING LINEAL VS LOGARÍTMICO
     # -----------------------------------------------------------------
+    # Tomamos un alpha representativo de alta elasticidad (cercano a 0.23)
     a_ref = alphas_10[-2]
     sismos_ref = resultados_alpha[a_ref]
     
@@ -98,9 +100,8 @@ for N in redes_N:
     ax_lin.set_ylabel('Conteo N(S)')
     ax_lin.grid(True, which="both", linestyle=':', alpha=0.5)
     
-    # Panel Logarítmico Normalizado (Inicia en S = 1)
-    max_s = max(sismos_ref) if len(sismos_ref) > 0 else 1
-    bordes_log = np.logspace(0, np.log10(max_s), 20)
+    # Panel Logarítmico Normalizado
+    bordes_log = np.logspace(np.log10(min(sismos_ref)), np.log10(max(sismos_ref)), 20)
     conteo_log, _ = np.histogram(sismos_ref, bins=bordes_log)
     delta_s = np.diff(bordes_log)
     pdf_log = conteo_log / (len(sismos_ref) * delta_s)
@@ -109,7 +110,7 @@ for N in redes_N:
     ax_log.scatter(centros_log[m_log], pdf_log[m_log], color='teal', edgecolors='k', s=25)
     ax_log.set_xscale('log')
     ax_log.set_yscale('log')
-    ax_log.set_title('Densidad P(S) - Binning Logarítmico', fontsize=11)
+    ax_log.set_title('Binning Logarítmico Normalizado P(S)', fontsize=11)
     ax_log.set_xlabel('Tamaño de Sismo (S)')
     ax_log.set_ylabel('Densidad P(S)')
     ax_log.grid(True, which="both", linestyle=':', alpha=0.5)
@@ -118,7 +119,7 @@ for N in redes_N:
     plt.show()
 
     # -----------------------------------------------------------------
-    # FIGURA B (Específica para N): GUTENBERG-RICHTER (CCDF) Y OMORI
+    # FIGURA B (Específica para N): GUTENBERG-RICHTER Y OMORI PARA 10 ALPHAS
     # -----------------------------------------------------------------
     fig, (ax_gr, ax_omo) = plt.subplots(1, 2, figsize=(13, 5))
     fig.suptitle(f'Tamaño de Red N = {N}x{N} | Comparativa de 10 Alphas', 
@@ -126,13 +127,11 @@ for N in redes_N:
     
     colores = plt.cm.inferno(np.linspace(0.15, 0.85, 10))
     
-    # Panel G-R (CCDF sin trazado grueso por duplicados)
+    # Panel G-R (CCDF)
     for i, a in enumerate(alphas_10):
-        sismos = resultados_alpha[a]
-        if len(sismos) > 0:
-            s_unicos, conteos = np.unique(sismos, return_counts=True)
-            ccdf = np.cumsum(conteos[::-1])[::-1] / len(sismos)
-            ax_gr.plot(s_unicos, ccdf, label=f'$\\alpha={a:.3f}$', color=colores[i], lw=1.5)
+        s_ord = np.sort(resultados_alpha[a])
+        ccdf = 1.0 - (np.arange(len(s_ord)) / len(s_ord))
+        ax_gr.plot(s_ord, ccdf, label=f'$\\alpha={a:.3f}$', color=colores[i], lw=1.5)
         
     ax_gr.set_xscale('log')
     ax_gr.set_yscale('log')
