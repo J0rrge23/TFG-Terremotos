@@ -1,45 +1,77 @@
 import numpy as np
-import pandas as pd
-from scipy.spatial.distance import cdist
 
-def calcular_zaliapin_nn(df, b=1.0, d=1.6, m0=2.5):
+def calcular_zaliapin_nn(df, b=1.0, d=1.6, m0=2.0, max_days_back=365):
     """
-    df: DataFrame con columnas ['t', 'x', 'y', 'mag'] ordenado por tiempo t
-    b: Exponente b de Gutenberg-Richter
-    d: Dimensión fractal espacial
+    Versión ultraoptimizada de Zaliapin NN.
+    Corregida para trabajar 100% con arreglos de NumPy y evitar conflictos de índices en Pandas.
     """
+    df = df.sort_values('datetime').reset_index(drop=True)
+    
+    # .values convierte la serie de tiempo a un arreglo NumPy puro
+    times = ((df['datetime'] - df['datetime'].iloc[0]).dt.total_seconds() / 86400.0).values
+    mags = df['mag'].values
+    lats = df['lat'].values
+    lons = df['lon'].values
     N = len(df)
-    t = df['t'].to_numpy()
-    coords = df[['x', 'y']].to_numpy()
-    mag = df['mag'].to_numpy()
-    
-    T_star = np.zeros(N)
-    R_star = np.zeros(N)
-    eta_star = np.zeros(N)
-    parent_idx = np.zeros(N, dtype=int)
-    
-    # El primer evento es la raíz del árbol
-    eta_star[0], T_star[0], R_star[0], parent_idx[0] = np.nan, np.nan, np.nan, -1
-    
-    for j in range(1, N):
-        dt = t[j] - t[:j] # Solo eventos del pasado i < j
-        dr = np.linalg.norm(coords[j] - coords[:j], axis=1)
+
+    # Precalcular coordenadas cartesianas 3D en esfera unitaria
+    lat_rad = np.radians(lats)
+    lon_rad = np.radians(lons)
+    X = np.cos(lat_rad) * np.cos(lon_rad)
+    Y = np.cos(lat_rad) * np.sin(lon_rad)
+    Z = np.sin(lat_rad)
+
+    # Precalcular factor de magnitud: 10^(-b*(m_j - m0))
+    mag_factor = 10.0 ** (-b * (mags - m0))
+
+    log10_T = np.full(N, np.nan)
+    log10_R = np.full(N, np.nan)
+    log10_eta = np.full(N, np.nan)
+    parent_idx = np.full(N, -1, dtype=int)
+
+    R_earth = 6371.0
+
+    for i in range(1, N):
+        t_i = times[i]
         
-        # Métrica normalizada
-        T_ij = dt * (10 ** (-0.5 * b * (mag[:j] - m0)))
-        R_ij = (dr ** d) * (10 ** (-0.5 * b * (mag[:j] - m0)))
-        eta_ij = T_ij * R_ij
-        
-        # Selección del vecino más cercano
-        i_min = np.argmin(eta_ij)
-        eta_star[j] = eta_ij[i_min]
-        T_star[j] = T_ij[i_min]
-        R_star[j] = R_ij[i_min]
-        parent_idx[j] = i_min
-        
-    df['log10_eta'] = np.log10(eta_star)
-    df['log10_T'] = np.log10(T_star)
-    df['log10_R'] = np.log10(R_star)
+        # Búsqueda binaria O(log N) para filtrar ventana temporal
+        j_start = np.searchsorted(times, t_i - max_days_back, side='left')
+        j_end = i
+
+        if j_start >= j_end:
+            continue
+
+        dt = np.maximum(t_i - times[j_start:j_end], 1e-6)
+
+        # Distancia entre coordenadas 3D convertida a km
+        dx = X[i] - X[j_start:j_end]
+        dy = Y[i] - Y[j_start:j_end]
+        dz = Z[i] - Z[j_start:j_end]
+        chord = np.sqrt(np.maximum(dx*dx + dy*dy + dz*dz, 0.0))
+        r = np.maximum(R_earth * 2.0 * np.arcsin(np.clip(chord / 2.0, 0.0, 1.0)), 1e-3)
+
+        # Proximidad espacio-temporal (todas las variables son arreglos NumPy)
+        eta = dt * (r ** d) * mag_factor[j_start:j_end]
+
+        min_rel_j = np.argmin(eta)
+        best_j = j_start + min_rel_j
+
+        best_eta = eta[min_rel_j]
+        best_dt = dt[min_rel_j]
+        best_r = r[min_rel_j]
+        best_mag_j = mags[best_j]
+
+        mag_factor_half = 10.0 ** (-0.5 * b * (best_mag_j - m0))
+        best_T = best_dt * mag_factor_half
+        best_R = (best_r ** d) * mag_factor_half
+
+        parent_idx[i] = best_j
+        log10_eta[i] = np.log10(best_eta)
+        log10_T[i] = np.log10(best_T)
+        log10_R[i] = np.log10(best_R)
+
     df['parent_idx'] = parent_idx
-    
+    df['log10_T'] = log10_T
+    df['log10_R'] = log10_R
+    df['log10_eta'] = log10_eta
     return df
