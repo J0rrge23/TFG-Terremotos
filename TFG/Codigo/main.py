@@ -8,7 +8,6 @@ from clustering import identificar_clusters
 from seismology_laws import fit_gutenberg_richter, fit_omori, omori_law
 
 def cargar_catalogo_scedc(filepath):
-    """Lee y parsea el catálogo SCEDC."""
     data = []
     with open(filepath, 'r') as f:
         for line in f:
@@ -42,36 +41,43 @@ def main():
     print(f"Ruta seleccionada: {archivo_scedc}")
     
     if not os.path.exists(archivo_scedc):
-        print("\n[ERROR] No se encontró el archivo del catálogo.")
+        print("[ERROR] No se encontró el archivo del catálogo.")
         return
 
     print("Cargando catálogo SCEDC...")
     df = cargar_catalogo_scedc(archivo_scedc)
-    print(f"Total de eventos cargados: {len(df)}")
     
-    # Filtro opcional para acelerar aún más (descartar sismos menores a M=2.0)
+    # 1. Filtro de Magnitud
     m_min = 2.0
     df = df[df['mag'] >= m_min].reset_index(drop=True)
     print(f"Eventos a procesar (M >= {m_min}): {len(df)}")
 
-    print("Calculando vecino más cercano de Zaliapin (Optimizado)...")
+    # 2. Algoritmo Zaliapin NN
+    print("Calculando vecino más cercano de Zaliapin...")
     df = calcular_zaliapin_nn(df, b=1.0, d=1.6, m0=2.0, max_days_back=365)
     
-    print("Identificando clústeres y réplicas...")
+    # 3. Clustering e Identificación de Mainshocks/Aftershocks
+    print("Desagrupando catálogo en Mainshocks, Aftershocks y Background...")
     df = identificar_clusters(df, log10_eta_0=-5.0)
     
-    print("\n--- Clasificación de Sismos ---")
+    print("\n--- Descomposición del Catálogo ---")
     print(df['event_type'].value_counts())
     
+    # 4. Análisis de Gutenberg-Richter
     Mc = 2.5
     a_cat, b_cat = fit_gutenberg_richter(df['mag'].values, Mc=Mc)
+    mainshocks = df[df['event_type'] == 'mainshock']
     aftershocks = df[df['event_type'] == 'aftershock']
+    
+    a_main, b_main = fit_gutenberg_richter(mainshocks['mag'].values, Mc=Mc)
     a_aft, b_aft = fit_gutenberg_richter(aftershocks['mag'].values, Mc=Mc)
     
     print(f"\n--- Gutenberg-Richter (Mc = {Mc}) ---")
-    print(f"Catálogo completo -> a: {a_cat:.2f}, b: {b_cat:.2f}")
-    print(f"Réplicas (Aftershocks) -> a: {a_aft:.2f}, b: {b_aft:.2f}")
+    print(f"Catálogo Completo  -> a: {a_cat:.2f}, b: {b_cat:.2f}")
+    print(f"Sismos Principales -> a: {a_main:.2f}, b: {b_main:.2f}")
+    print(f"Réplicas            -> a: {a_aft:.2f}, b: {b_aft:.2f}")
     
+    # 5. Ley de Omori (Réplicas referidas a su Mainshock)
     print("\n--- Ley de Omori ---")
     t_data, rate_data = None, None
     try:
@@ -80,22 +86,25 @@ def main():
     except Exception as e:
         print(f"No se pudo ajustar Omori: {e}")
         
+    # 6. Representación Gráfica
     fig, axs = plt.subplots(1, 2, figsize=(14, 5))
     
+    # Zaliapin T-R
     df_valid = df.dropna(subset=['log10_T', 'log10_R', 'log10_eta'])
     axs[0].scatter(df_valid['log10_T'], df_valid['log10_R'], c=df_valid['log10_eta'], cmap='coolwarm', s=12, alpha=0.6)
     axs[0].set_xlabel(r"$\log_{10} T$ (Tiempo reescalado)")
     axs[0].set_ylabel(r"$\log_{10} R$ (Distancia reescalada)")
-    axs[0].set_title("Distribución Bimodal (Zaliapin et al., 2008)")
+    axs[0].set_title("Diagrama T-R de Zaliapin et al. (2008)")
     axs[0].grid(True)
     
+    # Omori
     if t_data is not None:
-        axs[1].loglog(t_data, rate_data, 'ko', label='Datos Réplicas')
+        axs[1].loglog(t_data, rate_data, 'ko', label='Réplicas empiricas')
         t_fit = np.logspace(np.log10(t_data.min()), np.log10(t_data.max()), 100)
         axs[1].loglog(t_fit, omori_law(t_fit, K, c, p), 'r-', label=f'Omori (p={p:.2f})')
-        axs[1].set_xlabel("Tiempo $t$ (días)")
+        axs[1].set_xlabel("Tiempo $t - t_{mainshock}$ (días)")
         axs[1].set_ylabel("Tasa $n(t)$ (réplicas/día)")
-        axs[1].set_title("Ajuste de Ley de Omori")
+        axs[1].set_title("Ley de Omori Modificada")
         axs[1].legend()
         axs[1].grid(True, which="both")
         
