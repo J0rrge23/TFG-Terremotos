@@ -9,7 +9,6 @@ def identificar_clusters(df, log10_eta_0=-5.0):
     """
     N = len(df)
     
-    # 1. Crear Grafo Dirigido con las conexiones válidas (log10_eta <= log10_eta_0)
     G = nx.DiGraph()
     G.add_nodes_from(range(N))
     
@@ -18,9 +17,8 @@ def identificar_clusters(df, log10_eta_0=-5.0):
     padres = df['parent_idx'][mask].values
     
     for h, p in zip(hijos, padres):
-        G.add_edge(p, h)  # Arco dirigido del padre al hijo
+        G.add_edge(p, h)
         
-    # 2. Extraer componentes conexas (cada componente es una familia/árbol)
     G_undirected = G.to_undirected()
     componentes = list(nx.connected_components(G_undirected))
     
@@ -32,14 +30,12 @@ def identificar_clusters(df, log10_eta_0=-5.0):
     for comp in componentes:
         nodes = list(comp)
         if len(nodes) == 1:
-            # Evento independiente aislado
+            # Evento independiente de fondo
             continue
             
-        # Para clústeres de 2 o más eventos:
         sub_mags = df.loc[nodes, 'mag'].values
         sub_times = df.loc[nodes, 'datetime'].values
         
-        # El Mainshock es el evento con mayor magnitud del clúster
         max_mag_local_idx = np.argmax(sub_mags)
         m_idx = nodes[max_mag_local_idx]
         m_time = sub_times[max_mag_local_idx]
