@@ -1,15 +1,14 @@
 # =====================================================================
-# MAPA CARTOGRÁFICO DE ALTA PRECISIÓN Y ÁRBOL DE ZALIAPIN (MEJORADO)
+# MAPA CARTOGRÁFICO DE ALTA PRECISIÓN Y ÁRBOL DE ZALIAPIN (SIN INSET MAP)
 # =====================================================================
 import os
 import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import networkx as nx
 
-# Importar funciones de tus módulos locales
+# Importar funciones de los módulos locales
 try:
     from main import buscar_archivo_catalogo, cargar_catalogo_scedc
     from Zaliapin import calcular_zaliapin_nn
@@ -53,50 +52,15 @@ def cargar_fallas_geojson(ax, filepath="fallas.geojson", color='#16A085', linewi
         return False
 
 
-def agregar_inset_mapa(fig, bounds_main):
-    """
-    Genera el mapa de localización regional (Inset) en la esquina superior derecha.
-    """
-    # Posición del Inset: [left, bottom, width, height] en coordenadas de la figura
-    ax_inset = fig.add_axes([0.67, 0.67, 0.26, 0.26])
-    
-    # Límites regionales (Vista California / Baja California)
-    ax_inset.set_xlim(-125.0, -112.0)
-    ax_inset.set_ylim(28.0, 42.0)
-    
-    # Fondo del océano e interior del continente
-    ax_inset.set_facecolor('#B2D3E6')
-    
-    # Polígono simplificado regional de la costa oeste
-    coast_inset_x = [-125, -125, -124, -123, -120, -118, -115, -112, -112, -125]
-    coast_inset_y = [28, 42, 42, 38, 34, 32, 28, 28, 28, 28]
-    ax_inset.fill(coast_inset_x, coast_inset_y, color='#EAEAEA', edgecolor='#7F8C8D', lw=0.6)
-
-    # Encuadre en rojo del área de estudio principal
-    lon_min, lon_max, lat_min, lat_max = bounds_main
-    rect = mpatches.Rectangle(
-        (lon_min, lat_min), lon_max - lon_min, lat_max - lat_min,
-        fill=False, edgecolor='#C0392B', linewidth=1.2, zorder=5
-    )
-    ax_inset.add_patch(rect)
-    
-    # Formato del mini mapa
-    ax_inset.set_xticks([])
-    ax_inset.set_yticks([])
-    for spine in ax_inset.spines.values():
-        spine.set_color('#2C3E50')
-        spine.set_linewidth(0.8)
-
-
 def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_filename="figura_5_mapa_profesional.png"):
     """
-    Genera una representación cartográfica de precisión de California del Sur,
-    integrando fallas reales desde GeoJSON, mapa de localización y árbol de Zaliapin.
+    Genera una representación cartográfica de precisión para el TFG,
+    integrando fallas reales desde GeoJSON y etiquetado explícito del Mainshock.
     """
     print(f"\n[1/4] Filtrando catálogo para M >= {Mc}...")
     df = df_raw[df_raw['mag'] >= Mc].copy().reset_index(drop=True)
 
-    print("[2/4] Calculando métrica de Zaliapin y identificando clústeres...")
+    print("[2/4] Calculando métrica de Zaliapin e identificando clústeres...")
     a_cat, b_cat = fit_gutenberg_richter(df['mag'].values, Mc=Mc)
     b_val = b_cat if not np.isnan(b_cat) else 1.0
     df = calcular_zaliapin_nn(df, b=b_val, d=1.6, m0=Mc)
@@ -120,15 +84,13 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
     ax.set_xlim(lon_min, lon_max)
     ax.set_ylim(lat_min, lat_max)
 
-    # Color del Océano Pacífico y Continente
-    ax.set_facecolor('#D4E6F1')  # Azul agua suave
+    ax.set_facecolor('#D4E6F1')  # Océano Pacífico
 
-    # Polígono costero continuo mejorado
+    # Polígono costero
     coast_lon = [-120.5, -120.0, -119.6, -118.9, -118.5, -118.0, -117.3, -116.5, -114.0, -114.0, -120.5]
     coast_lat = [35.5, 34.8, 34.0, 33.8, 33.7, 33.5, 32.5, 31.5, 31.5, 37.5, 37.5]
     ax.fill(coast_lon, coast_lat, color='#FAFAFA', zorder=0, edgecolor='none')
 
-    # Línea de costa
     ax.plot([-120.5, -120.0, -119.6, -118.9, -118.5, -118.0, -117.3, -116.5], 
             [35.5, 34.8, 34.0, 33.8, 33.7, 33.5, 32.5, 31.5], 
             color='#2C3E50', lw=1.1, zorder=1)
@@ -136,19 +98,15 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
     # -----------------------------------------------------------------
     # 2. FRONTERAS Y FALLAS GEOLÓGICAS (DESDE GEOJSON)
     # -----------------------------------------------------------------
-    # Frontera Internacional México-EE.UU.
     ax.axhline(y=32.5, color='#7F8C8D', linestyle='--', linewidth=1.0, zorder=2)
     ax.text(-115.1, 32.22, "M É X I C O", fontsize=9.5, fontweight='bold', color='#7F8C8D')
     ax.text(-115.1, 32.65, "C A L I F O R N I A", fontsize=9.5, fontweight='bold', color='#7F8C8D')
 
-    # Límite estatal con Nevada
     ax.plot([-117.0, -114.0], [36.0, 35.0], color='#7F8C8D', linestyle=':', lw=1.0, zorder=2)
     ax.text(-116.2, 36.6, "N E V A D A", fontsize=9.5, fontweight='bold', color='#7F8C8D')
 
-    # Cargar trazas reales de fallas desde GeoJSON
     fallas_cargadas = cargar_fallas_geojson(ax, filepath="fallas.geojson", color='#16A085', linewidth=0.9, alpha=0.8)
 
-    # Si no hay archivo GeoJSON, usar fallas principales de respaldo
     if not fallas_cargadas:
         COLOR_FALLAS = '#16A085'
         ax.plot([-119.5, -118.5, -117.5, -116.3, -115.5], [35.3, 34.5, 34.2, 33.5, 33.0], 
@@ -156,7 +114,6 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
         ax.plot([-117.3, -116.8, -116.0], [34.3, 33.8, 33.0], color=COLOR_FALLAS, lw=1.2, zorder=2)
         ax.plot([-118.5, -117.5, -116.8], [34.8, 35.4, 35.6], color=COLOR_FALLAS, lw=1.2, zorder=2)
     else:
-        # Dummy plot para la leyenda cuando se cargan vía GeoJSON
         ax.plot([], [], color='#16A085', lw=1.2, label='Fallas Principales')
 
     # -----------------------------------------------------------------
@@ -172,7 +129,6 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
     # -----------------------------------------------------------------
     # 4. ÁRBOL DE ZALIAPIN Y EVENTOS CLASIFICADOS
     # -----------------------------------------------------------------
-    # Conexiones del árbol (Líneas moradas)
     G_sub = nx.DiGraph()
     indices_cluster = set(df_cluster.index)
     for idx, row in df_cluster.iterrows():
@@ -185,10 +141,9 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
         lon2, lat2 = df.loc[v, 'lon'], df.loc[v, 'lat']
         ax.plot([lon1, lon2], [lat1, lat2], color='#8E44AD', lw=0.55, alpha=0.55, zorder=4)
 
-    # Dummy line para la leyenda del árbol
     ax.plot([], [], color='#8E44AD', lw=0.8, label=r'Conexión de Árbol ($\log_{10}\eta \leq 0.0$)')
 
-    # Réplicas del clúster
+    # Réplicas
     df_after = df_cluster[df_cluster['event_type'] == 'aftershock']
     sizes_af = 3.2 * np.exp(0.95 * (df_after['mag'] - Mc))
     ax.scatter(df_after['lon'], df_after['lat'], s=sizes_af, 
@@ -204,9 +159,23 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
                    alpha=0.9, label=f'Precursores ($N={len(df_fore)}$)', zorder=6)
 
     # Evento Principal (Mainshock)
-    ax.scatter(ms_row['lon'], ms_row['lat'], s=220, facecolors='#C0392B', 
+    ax.scatter(ms_row['lon'], ms_row['lat'], s=240, facecolors='#C0392B', 
                edgecolors='black', marker='*', lw=1.1, 
                label=f'Mainshock (M{ms_row["mag"]:.1f})', zorder=7)
+
+    # Anotación destacada del Mainshock
+    label_mainshock = f"Mainshock: Ridgecrest M{ms_row['mag']:.1f} (2019)"
+    ax.annotate(
+        label_mainshock, 
+        xy=(ms_row['lon'], ms_row['lat']),
+        xytext=(ms_row['lon'] - 1.25, ms_row['lat'] + 0.25),
+        fontsize=8.5, 
+        fontweight='bold', 
+        color='#7B241C',
+        bbox=dict(boxstyle="round,pad=0.35", fc="#FDEDEC", ec="#C0392B", lw=1.0, alpha=0.95),
+        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=-0.15", color='#C0392B', lw=1.1),
+        zorder=9
+    )
 
     # -----------------------------------------------------------------
     # 5. TERREMOTOS HISTÓRICOS Y CIUDADES
@@ -225,7 +194,6 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
                     arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0", color='#2C3E50', lw=0.6),
                     zorder=8)
 
-    # Dummy para terremotos históricos en la leyenda
     ax.scatter([], [], marker='D', s=25, facecolors='none', edgecolors='#2C3E50', label='Sismos Históricos (M>6.5)')
 
     ciudades = [
@@ -238,22 +206,19 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
         ax.text(c['lon'] + 0.1, c['lat'] - 0.10, c['nombre'], fontsize=8.5, fontweight='bold', color='#2C3E50', zorder=8)
 
     # -----------------------------------------------------------------
-    # 6. ELEMENTOS CARTOGRÁFICOS (ROSA DE LOS VIENTOS Y ESCALA)
+    # 6. ELEMENTOS CARTOGRÁFICOS
     # -----------------------------------------------------------------
     # Flecha Norte
     ax.annotate('N', xy=(-119.1, 36.8), xytext=(-119.1, 36.3),
                 ha='center', va='bottom', fontsize=10.5, fontweight='bold', color='#2C3E50',
                 arrowprops=dict(facecolor='#2C3E50', width=1.8, headwidth=6.5), zorder=9)
 
-    # Escala de 100 km
+    # Escala
     ax.plot([-119.0, -117.9], [32.1, 32.1], color='#2C3E50', lw=2.5, zorder=9)
     ax.text(-118.45, 32.18, "100 km", ha='center', fontsize=8.0, fontweight='bold', color='#2C3E50', zorder=9)
 
-    # Inset regional
-    agregar_inset_mapa(fig, (lon_min, lon_max, lat_min, lat_max))
-
     # -----------------------------------------------------------------
-    # 7. TÍTULO, LEYENDA Y FORMATO FINAL
+    # 7. TÍTULO Y LEYENDA
     # -----------------------------------------------------------------
     ax.set_xlabel('Longitud (°O)', fontsize=10, fontweight='bold', labelpad=5)
     ax.set_ylabel('Latitud (°N)', fontsize=10, fontweight='bold', labelpad=5)
@@ -272,7 +237,7 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
         spine.set_linewidth(0.8)
 
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
-    print(f"[ÉXITO] Mapa profesional generado y guardado en '{output_filename}'")
+    print(f"[ÉXITO] Figura guardada como '{output_filename}'")
     plt.close()
 
 
