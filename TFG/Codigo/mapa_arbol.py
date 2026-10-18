@@ -1,10 +1,12 @@
 # =====================================================================
-# MAPA CARTOGRÁFICO DE ALTA PRECISIÓN Y ÁRBOL DE ZALIAPIN (CORREGIDO)
+# MAPA CARTOGRÁFICO DE ALTA PRECISIÓN Y ÁRBOL DE ZALIAPIN (MEJORADO)
 # =====================================================================
 import os
+import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import networkx as nx
 
 # Importar funciones de tus módulos locales
@@ -17,16 +19,84 @@ except ImportError:
     pass
 
 
+def cargar_fallas_geojson(ax, filepath="fallas.geojson", color='#16A085', linewidth=0.8, alpha=0.75):
+    """
+    Carga y dibuja la geometría exacta de las fallas desde el GeoJSON en el eje de Matplotlib.
+    """
+    if not os.path.exists(filepath):
+        print(f"[Aviso] No se encontró '{filepath}'. Se omitirán las trazas GeoJSON.")
+        return False
+
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        features = data.get("features", [])
+        for feature in features:
+            geom = feature.get("geometry", {})
+            gtype = geom.get("type")
+            coords = geom.get("coordinates", [])
+
+            if gtype == "LineString":
+                lons = [c[0] for c in coords]
+                lats = [c[1] for c in coords]
+                ax.plot(lons, lats, color=color, lw=linewidth, alpha=alpha, zorder=2)
+            elif gtype == "MultiLineString":
+                for line in coords:
+                    lons = [c[0] for c in line]
+                    lats = [c[1] for c in line]
+                    ax.plot(lons, lats, color=color, lw=linewidth, alpha=alpha, zorder=2)
+
+        return True
+    except Exception as e:
+        print(f"[Error] Fallo al leer GeoJSON de fallas: {e}")
+        return False
+
+
+def agregar_inset_mapa(fig, bounds_main):
+    """
+    Genera el mapa de localización regional (Inset) en la esquina superior derecha.
+    """
+    # Posición del Inset: [left, bottom, width, height] en coordenadas de la figura
+    ax_inset = fig.add_axes([0.67, 0.67, 0.26, 0.26])
+    
+    # Límites regionales (Vista California / Baja California)
+    ax_inset.set_xlim(-125.0, -112.0)
+    ax_inset.set_ylim(28.0, 42.0)
+    
+    # Fondo del océano e interior del continente
+    ax_inset.set_facecolor('#B2D3E6')
+    
+    # Polígono simplificado regional de la costa oeste
+    coast_inset_x = [-125, -125, -124, -123, -120, -118, -115, -112, -112, -125]
+    coast_inset_y = [28, 42, 42, 38, 34, 32, 28, 28, 28, 28]
+    ax_inset.fill(coast_inset_x, coast_inset_y, color='#EAEAEA', edgecolor='#7F8C8D', lw=0.6)
+
+    # Encuadre en rojo del área de estudio principal
+    lon_min, lon_max, lat_min, lat_max = bounds_main
+    rect = mpatches.Rectangle(
+        (lon_min, lat_min), lon_max - lon_min, lat_max - lat_min,
+        fill=False, edgecolor='#C0392B', linewidth=1.2, zorder=5
+    )
+    ax_inset.add_patch(rect)
+    
+    # Formato del mini mapa
+    ax_inset.set_xticks([])
+    ax_inset.set_yticks([])
+    for spine in ax_inset.spines.values():
+        spine.set_color('#2C3E50')
+        spine.set_linewidth(0.8)
+
+
 def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_filename="figura_5_mapa_profesional.png"):
     """
-    Genera una representación cartográfica estilizada y nítida de California del Sur,
-    eliminando el solapamiento masivo de puntos e integrando las fallas tectónicas,
-    las ramas del árbol de Zaliapin y los eventos clasificados.
+    Genera una representación cartográfica de precisión de California del Sur,
+    integrando fallas reales desde GeoJSON, mapa de localización y árbol de Zaliapin.
     """
     print(f"\n[1/4] Filtrando catálogo para M >= {Mc}...")
     df = df_raw[df_raw['mag'] >= Mc].copy().reset_index(drop=True)
 
-    print("[2/4] Calculando métrica de Zaliapin y podando árbol...")
+    print("[2/4] Calculando métrica de Zaliapin y identificando clústeres...")
     a_cat, b_cat = fit_gutenberg_richter(df['mag'].values, Mc=Mc)
     b_val = b_cat if not np.isnan(b_cat) else 1.0
     df = calcular_zaliapin_nn(df, b=b_val, d=1.6, m0=Mc)
@@ -38,72 +108,71 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
     df_cluster = df[df['cluster_id'] == top_cluster_id].copy()
     ms_row = df_cluster[df_cluster['event_type'] == 'mainshock'].iloc[0]
 
-    print("[3/4] Maquetando lienzo cartográfico de alta calidad...")
+    print("[3/4] Maquetando lienzo cartográfico...")
     fig, ax = plt.subplots(figsize=(10, 11), dpi=300)
     fig.patch.set_facecolor('white')
 
     # -----------------------------------------------------------------
-    # 1. LÍMITES Y COLORACIÓN GEOGRÁFICA BASE
+    # 1. LÍMITES Y BASE GEOGRÁFICA
     # -----------------------------------------------------------------
     lon_min, lon_max = -119.5, -114.5
     lat_min, lat_max = 31.8, 37.2
     ax.set_xlim(lon_min, lon_max)
     ax.set_ylim(lat_min, lat_max)
 
-    # Color del Océano Pacífico y Polígono Continental
-    ax.set_facecolor('#B2D3E6')  # Azul océano limpio
+    # Color del Océano Pacífico y Continente
+    ax.set_facecolor('#D4E6F1')  # Azul agua suave
 
-    coast_lon = [-120.5, -119.6, -118.8, -118.0, -117.3, -116.2, -114.0, -114.0, -120.5]
-    coast_lat = [35.2, 34.4, 34.0, 33.6, 32.6, 31.8, 31.8, 38.0, 38.0]
-    ax.fill(coast_lon, coast_lat, color='#F9F9F6', zorder=0, edgecolor='none')  # Beige suave terrestre
+    # Polígono costero continuo mejorado
+    coast_lon = [-120.5, -120.0, -119.6, -118.9, -118.5, -118.0, -117.3, -116.5, -114.0, -114.0, -120.5]
+    coast_lat = [35.5, 34.8, 34.0, 33.8, 33.7, 33.5, 32.5, 31.5, 31.5, 37.5, 37.5]
+    ax.fill(coast_lon, coast_lat, color='#FAFAFA', zorder=0, edgecolor='none')
 
-    # Línea de costa principal
-    ax.plot([-120.5, -119.6, -118.8, -118.0, -117.3, -116.2], 
-            [35.2, 34.4, 34.0, 33.6, 32.6, 31.8], color='#34495E', lw=1.2, zorder=1)
+    # Línea de costa
+    ax.plot([-120.5, -120.0, -119.6, -118.9, -118.5, -118.0, -117.3, -116.5], 
+            [35.5, 34.8, 34.0, 33.8, 33.7, 33.5, 32.5, 31.5], 
+            color='#2C3E50', lw=1.1, zorder=1)
 
     # -----------------------------------------------------------------
-    # 2. FRONTERAS Y SISTEMA DE FALLAS PRINCIPALES
+    # 2. FRONTERAS Y FALLAS GEOLÓGICAS (DESDE GEOJSON)
     # -----------------------------------------------------------------
-    # Frontera Internacional México-EE.UU. (Separación por espacios manual)
-    ax.axhline(y=32.5, color='#7F8C8D', linestyle='--', linewidth=1.1, zorder=2)
-    ax.text(-115.1, 32.22, "M É X I C O", fontsize=10, fontweight='bold', color='#7F8C8D')
-    ax.text(-115.1, 32.65, "C A L I F O R N I A", fontsize=10, fontweight='bold', color='#7F8C8D')
-    
+    # Frontera Internacional México-EE.UU.
+    ax.axhline(y=32.5, color='#7F8C8D', linestyle='--', linewidth=1.0, zorder=2)
+    ax.text(-115.1, 32.22, "M É X I C O", fontsize=9.5, fontweight='bold', color='#7F8C8D')
+    ax.text(-115.1, 32.65, "C A L I F O R N I A", fontsize=9.5, fontweight='bold', color='#7F8C8D')
+
     # Límite estatal con Nevada
-    ax.plot([-117.0, -114.0], [36.0, 35.0], color='#7F8C8D', linestyle=':', lw=1.1, zorder=2)
-    ax.text(-116.1, 36.6, "N E V A D A", fontsize=10, fontweight='bold', color='#7F8C8D')
+    ax.plot([-117.0, -114.0], [36.0, 35.0], color='#7F8C8D', linestyle=':', lw=1.0, zorder=2)
+    ax.text(-116.2, 36.6, "N E V A D A", fontsize=9.5, fontweight='bold', color='#7F8C8D')
 
-    # Trazas esquemáticas de las fallas tectónicas dominantes (Verde azulado / Teal)
-    COLOR_FALLAS = '#16A085'
-    
-    # Falla de San Andrés (San Andreas Fault Zone)
-    saf_lon = [-119.5, -118.5, -117.5, -116.3, -115.5]
-    saf_lat = [35.3, 34.5, 34.2, 33.5, 33.0]
-    ax.plot(saf_lon, saf_lat, color=COLOR_FALLAS, lw=1.6, zorder=2, label='Fallas Principales')
+    # Cargar trazas reales de fallas desde GeoJSON
+    fallas_cargadas = cargar_fallas_geojson(ax, filepath="fallas.geojson", color='#16A085', linewidth=0.9, alpha=0.8)
 
-    # Falla de San Jacinto & Garlock
-    sjf_lon = [-117.3, -116.8, -116.0]
-    sjf_lat = [34.3, 33.8, 33.0]
-    ax.plot(sjf_lon, sjf_lat, color=COLOR_FALLAS, lw=1.3, zorder=2)
-
-    garlock_lon = [-118.5, -117.5, -116.8]
-    garlock_lat = [34.8, 35.4, 35.6]
-    ax.plot(garlock_lon, garlock_lat, color=COLOR_FALLAS, lw=1.3, zorder=2)
+    # Si no hay archivo GeoJSON, usar fallas principales de respaldo
+    if not fallas_cargadas:
+        COLOR_FALLAS = '#16A085'
+        ax.plot([-119.5, -118.5, -117.5, -116.3, -115.5], [35.3, 34.5, 34.2, 33.5, 33.0], 
+                color=COLOR_FALLAS, lw=1.4, zorder=2, label='Fallas Principales')
+        ax.plot([-117.3, -116.8, -116.0], [34.3, 33.8, 33.0], color=COLOR_FALLAS, lw=1.2, zorder=2)
+        ax.plot([-118.5, -117.5, -116.8], [34.8, 35.4, 35.6], color=COLOR_FALLAS, lw=1.2, zorder=2)
+    else:
+        # Dummy plot para la leyenda cuando se cargan vía GeoJSON
+        ax.plot([], [], color='#16A085', lw=1.2, label='Fallas Principales')
 
     # -----------------------------------------------------------------
-    # 3. SISMICIDAD DE FONDO (SIN EFECTO 'MANCHA')
+    # 3. SISMICIDAD DE FONDO
     # -----------------------------------------------------------------
     df_bg = df[df['cluster_id'] != top_cluster_id]
     sizes_bg = 0.8 * np.exp(0.85 * (df_bg['mag'] - Mc))
-    
+
     ax.scatter(df_bg['lon'], df_bg['lat'], s=sizes_bg, 
                facecolors='none', edgecolors='#95A5A6', linewidths=0.35, 
                alpha=0.22, label='Sismicidad Secundaria / Fondo', zorder=3)
 
     # -----------------------------------------------------------------
-    # 4. GRAFO DEL ÁRBOLE SPANNING Y CLÚSTER MAYOR
+    # 4. ÁRBOL DE ZALIAPIN Y EVENTOS CLASIFICADOS
     # -----------------------------------------------------------------
-    # A) Ramas del árbol (Conexiones moradas)
+    # Conexiones del árbol (Líneas moradas)
     G_sub = nx.DiGraph()
     indices_cluster = set(df_cluster.index)
     for idx, row in df_cluster.iterrows():
@@ -116,14 +185,17 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
         lon2, lat2 = df.loc[v, 'lon'], df.loc[v, 'lat']
         ax.plot([lon1, lon2], [lat1, lat2], color='#8E44AD', lw=0.55, alpha=0.55, zorder=4)
 
-    # B) Réplicas del clúster (Azul acero)
+    # Dummy line para la leyenda del árbol
+    ax.plot([], [], color='#8E44AD', lw=0.8, label=r'Conexión de Árbol ($\log_{10}\eta \leq 0.0$)')
+
+    # Réplicas del clúster
     df_after = df_cluster[df_cluster['event_type'] == 'aftershock']
     sizes_af = 3.2 * np.exp(0.95 * (df_after['mag'] - Mc))
     ax.scatter(df_after['lon'], df_after['lat'], s=sizes_af, 
                facecolors='#2980B9', edgecolors='#1B4F72', linewidths=0.4, 
                alpha=0.75, label=f'Réplicas Clúster ($N={len(df_after)}$)', zorder=5)
 
-    # C) Precursores
+    # Precursores
     df_fore = df_cluster[df_cluster['event_type'] == 'foreshock']
     if len(df_fore) > 0:
         sizes_fo = 3.5 * np.exp(0.95 * (df_fore['mag'] - Mc))
@@ -131,13 +203,13 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
                    facecolors='#F39C12', edgecolors='black', linewidths=0.5, 
                    alpha=0.9, label=f'Precursores ($N={len(df_fore)}$)', zorder=6)
 
-    # D) Evento Principal (Estrella carmesí)
+    # Evento Principal (Mainshock)
     ax.scatter(ms_row['lon'], ms_row['lat'], s=220, facecolors='#C0392B', 
                edgecolors='black', marker='*', lw=1.1, 
                label=f'Mainshock (M{ms_row["mag"]:.1f})', zorder=7)
 
     # -----------------------------------------------------------------
-    # 5. TERREMOTOS EMBLEMÁTICOS REGIONALES Y CIUDADES
+    # 5. TERREMOTOS HISTÓRICOS Y CIUDADES
     # -----------------------------------------------------------------
     sismos_hist = [
         {"nombre": "Landers M7.3 (1992)", "lat": 34.20, "lon": -116.43},
@@ -145,12 +217,16 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
         {"nombre": "Northridge M6.7 (1994)", "lat": 34.21, "lon": -118.54}
     ]
     for sh in sismos_hist:
+        ax.scatter(sh['lon'], sh['lat'], marker='D', s=25, facecolors='none', edgecolors='#2C3E50', lw=1.0, zorder=7)
         ax.annotate(sh['nombre'], (sh['lon'], sh['lat']),
-                    xytext=(sh['lon'] + 0.18, sh['lat'] + 0.12),
-                    fontsize=8, fontweight='bold', color='#2C3E50',
-                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="#BDC3C7", lw=0.6, alpha=0.92),
-                    arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0", color='#2C3E50', lw=0.7),
+                    xytext=(sh['lon'] + 0.18, sh['lat'] + 0.10),
+                    fontsize=7.8, fontweight='bold', color='#2C3E50',
+                    bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#BDC3C7", lw=0.5, alpha=0.92),
+                    arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0", color='#2C3E50', lw=0.6),
                     zorder=8)
+
+    # Dummy para terremotos históricos en la leyenda
+    ax.scatter([], [], marker='D', s=25, facecolors='none', edgecolors='#2C3E50', label='Sismos Históricos (M>6.5)')
 
     ciudades = [
         {"nombre": "Los Angeles", "lat": 34.05, "lon": -118.25},
@@ -158,42 +234,45 @@ def generar_mapa_profesional_zaliapin(df_raw, log10_eta_0=0.0, Mc=3.0, output_fi
         {"nombre": "Mexicali", "lat": 32.66, "lon": -115.46}
     ]
     for c in ciudades:
-        ax.scatter(c['lon'], c['lat'], s=25, color='#2C3E50', marker='s', zorder=7)
-        ax.text(c['lon'] + 0.1, c['lat'] - 0.12, c['nombre'], fontsize=8.5, fontweight='bold', color='#2C3E50', zorder=8)
+        ax.scatter(c['lon'], c['lat'], s=22, color='#2C3E50', marker='s', zorder=7)
+        ax.text(c['lon'] + 0.1, c['lat'] - 0.10, c['nombre'], fontsize=8.5, fontweight='bold', color='#2C3E50', zorder=8)
 
     # -----------------------------------------------------------------
     # 6. ELEMENTOS CARTOGRÁFICOS (ROSA DE LOS VIENTOS Y ESCALA)
     # -----------------------------------------------------------------
     # Flecha Norte
-    ax.annotate('N', xy=(-119.1, 36.8), xytext=(-119.1, 36.4),
-                ha='center', va='bottom', fontsize=11, fontweight='bold', color='#2C3E50',
-                arrowprops=dict(facecolor='#2C3E50', width=2, headwidth=7), zorder=9)
+    ax.annotate('N', xy=(-119.1, 36.8), xytext=(-119.1, 36.3),
+                ha='center', va='bottom', fontsize=10.5, fontweight='bold', color='#2C3E50',
+                arrowprops=dict(facecolor='#2C3E50', width=1.8, headwidth=6.5), zorder=9)
 
     # Escala de 100 km
-    ax.plot([-119.0, -117.9], [32.1, 32.1], color='#2C3E50', lw=3, zorder=9)
-    ax.text(-118.45, 32.2, "100 km", ha='center', fontsize=8.5, fontweight='bold', color='#2C3E50', zorder=9)
+    ax.plot([-119.0, -117.9], [32.1, 32.1], color='#2C3E50', lw=2.5, zorder=9)
+    ax.text(-118.45, 32.18, "100 km", ha='center', fontsize=8.0, fontweight='bold', color='#2C3E50', zorder=9)
+
+    # Inset regional
+    agregar_inset_mapa(fig, (lon_min, lon_max, lat_min, lat_max))
 
     # -----------------------------------------------------------------
-    # 7. LEYENDAS Y ESTÉTICA GENERAL
+    # 7. TÍTULO, LEYENDA Y FORMATO FINAL
     # -----------------------------------------------------------------
-    ax.set_xlabel('Longitud (°O)', fontsize=10.5, fontweight='bold', labelpad=6)
-    ax.set_ylabel('Latitud (°N)', fontsize=10.5, fontweight='bold', labelpad=6)
-    ax.set_title(r'Figura 5: Identificación de Réplicas y Árbol de Desencadenamiento ($M \geq ' + f'{Mc}' + r'$)' + '\n' +
+    ax.set_xlabel('Longitud (°O)', fontsize=10, fontweight='bold', labelpad=5)
+    ax.set_ylabel('Latitud (°N)', fontsize=10, fontweight='bold', labelpad=5)
+    
+    ax.set_title(r'Identificación de Réplicas y Árbol de Desencadenamiento ($M \geq ' + f'{Mc}' + r'$)' + '\n' +
                  r'Sur de California | Umbral de Corte $\log_{10}\eta_0 = 0.0$', 
-                 fontsize=11.5, fontweight='bold', color='#2C3E50', pad=12)
+                 fontsize=11, fontweight='bold', color='#2C3E50', pad=12)
 
-    leg = ax.legend(loc='lower left', fontsize=8.5, framealpha=0.95, edgecolor='#BDC3C7')
+    leg = ax.legend(loc='lower left', fontsize=8.0, framealpha=0.95, edgecolor='#BDC3C7')
     leg.set_zorder(10)
 
-    ax.grid(True, linestyle=':', color='#B0BEC5', alpha=0.6, zorder=1)
+    ax.grid(True, linestyle=':', color='#B0BEC5', alpha=0.5, zorder=1)
     
     for spine in ax.spines.values():
         spine.set_color('#7F8C8D')
         spine.set_linewidth(0.8)
 
-    plt.tight_layout()
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
-    print(f"[ÉXITO] Mapa profesional guardado como '{output_filename}'")
+    print(f"[ÉXITO] Mapa profesional generado y guardado en '{output_filename}'")
     plt.close()
 
 
