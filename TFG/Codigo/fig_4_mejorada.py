@@ -1,141 +1,232 @@
-# =====================================================================
-# FIGURA 3: VISUALIZACIÓN COMPLETA Y PROFESIONAL (RANGO -12 A +3)
-# Distribución bimodal de log10(eta*) mostrando la cola derecha completa
-# =====================================================================
 import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 
-try:
-    from main import buscar_archivo_catalogo, cargar_catalogo_scedc
-    from Zaliapin import calcular_zaliapin_nn
-    from seismology_laws import fit_gutenberg_richter
-except ImportError:
-    pass
+# =============================================================================
+# CONFIGURACIÓN DE ESTILO PROFESIONAL (ESTILO PUBLICATION / PRL)
+# =============================================================================
+plt.rcParams.update({
+    'font.family': 'sans-serif',
+    'font.sans-serif': ['DejaVu Sans', 'Arial', 'Helvetica'],
+    'axes.edgecolor': '#222222',
+    'axes.linewidth': 1.1,
+    'grid.color': '#d3d3d3',
+    'grid.linestyle': '--',
+    'grid.alpha': 0.6,
+    'xtick.direction': 'in',
+    'ytick.direction': 'in',
+    'xtick.top': True,
+    'ytick.right': True,
+    'xtick.major.size': 5,
+    'ytick.major.size': 5,
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10,
+    'axes.labelsize': 11,
+    'axes.titlesize': 11,
+    'figure.titlesize': 13
+})
 
 
-def generar_figura3_profesional_completa(df_events, output_filename="figura_3_zaliapin_profesional_ampliada.png"):
-    """
-    Genera la Figura 3 de Zaliapin et al. (2008) extendiendo el eje X hasta +3.0
-    para visualizar la cola completa de la sismicidad de fondo (log10 eta* > 0).
-    """
-    # 1. Filtro base m >= 2.0 y cálculo de la métrica de Zaliapin
-    df_base = df_events[df_events['mag'] >= 2.0].copy()
+# =============================================================================
+# 1. CARGA Y PARSEO COMPLETO DEL CATÁLOGO (TODOS LOS AÑOS)
+# =============================================================================
+def cargar_catalogo_scedc(filepath):
+    """Parsea el archivo ASCII del catálogo SCEDC sin restringir fechas."""
+    data = []
+    with open(filepath, 'r') as f:
+        for line in f:
+            if line.startswith('#') or not line.strip():
+                continue
+            parts = line.split()
+            if len(parts) >= 8:
+                try:
+                    date_str, time_str = parts[0], parts[1]
+                    mag = float(parts[4])
+                    lat = float(parts[6])
+                    lon = float(parts[7])
+                    dt = pd.to_datetime(f"{date_str} {time_str}")
+                    data.append({'datetime': dt, 'lat': lat, 'lon': lon, 'mag': mag})
+                except Exception:
+                    continue
+                    
+    df = pd.DataFrame(data).dropna().sort_values('datetime').reset_index(drop=True)
+    return df
 
-    if 'log10_eta' not in df_base.columns:
-        a_cat, b_cat = fit_gutenberg_richter(df_base['mag'].values, Mc=2.0)
-        b_val = b_cat if not np.isnan(b_cat) else 1.0
-        df_base = calcular_zaliapin_nn(df_base, b=b_val, d=1.6, m0=2.0)
 
-    df_base = df_base.dropna(subset=['log10_eta'])
+# =============================================================================
+# 2. CÁLCULO DE COMPONENTES REESCALADAS T Y R (Zaliapin et al., 2008)
+# =============================================================================
+def calcular_componentes_zaliapin(df, b=1.0, d=1.6, m0=3.0):
+    """Calcula log10(T) y log10(R) para el conjunto completo de sismos con M >= m0."""
+    df_sub = df[df['mag'] >= m0].sort_values('datetime').reset_index(drop=True)
+    N = len(df_sub)
+    if N < 2:
+        return pd.DataFrame(), N
 
-    # 2. Estilo global y paleta cromática profesional
-    plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Helvetica']
+    # Tiempo en años transcurridos desde el origen del catálogo
+    t_start = df_sub['datetime'].iloc[0]
+    tau_years = (df_sub['datetime'] - t_start).dt.total_seconds().values / (86400.0 * 365.25)
+    mags = df_sub['mag'].values
+    lats = df_sub['lat'].values
+    lons = df_sub['lon'].values
+
+    # Coordenadas 3D cartesianas en esfera terrestre
+    lat_rad = np.radians(lats)
+    lon_rad = np.radians(lons)
+    X = np.cos(lat_rad) * np.cos(lon_rad)
+    Y = np.cos(lat_rad) * np.sin(lon_rad)
+    Z = np.sin(lat_rad)
+
+    R_earth = 6371.0  # Radio de la Tierra en km
+    mag_factor = 10.0 ** (-b * (mags - m0))
+
+    log10_T = np.full(N, np.nan)
+    log10_R = np.full(N, np.nan)
+
+    for i in range(1, N):
+        t_i = tau_years[i]
+        dt = np.maximum(t_i - tau_years[:i], 1e-10)
+
+        # Distancia sobre la superficie terrestre (gran círculo)
+        dx = X[i] - X[:i]
+        dy = Y[i] - Y[:i]
+        dz = Z[i] - Z[:i]
+        chord = np.sqrt(np.maximum(dx*dx + dy*dy + dz*dz, 0.0))
+        r = np.maximum(R_earth * 2.0 * np.arcsin(np.clip(chord / 2.0, 0.0, 1.0)), 1e-3)
+
+        # Métrica espacio-tiempo eta
+        eta = dt * (r ** d) * mag_factor[:i]
+
+        min_j = np.argmin(eta)
+        best_mag_j = mags[min_j]
+
+        # Componentes reescaladas (Eq. 6 de Zaliapin et al., 2008)
+        mag_factor_half = 10.0 ** (-0.5 * b * (best_mag_j - m0))
+        best_T = dt[min_j] * mag_factor_half
+        best_R = (r[min_j] ** d) * mag_factor_half
+
+        log10_T[i] = np.log10(best_T)
+        log10_R[i] = np.log10(best_R)
+
+    df_res = pd.DataFrame({'log10_T': log10_T, 'log10_R': log10_R}).dropna()
+    return df_res, N
+
+
+# =============================================================================
+# 3. RENDERIZADO DE DENSIDAD 2D CON CALIDAD EDITORIAL
+# =============================================================================
+def graficar_panel_densidad(ax, df_tr, titulo, n_events, niveles=14):
+    """Genera curvas de nivel de densidad suavizadas (KDE Gaussiano)."""
+    x = df_tr['log10_T'].values
+    y = df_tr['log10_R'].values
+
+    # Estimación de densidad mediante KDE
+    xy = np.vstack([x, y])
+    kde = gaussian_kde(xy)
+
+    # Grilla de evaluación regular
+    xmin, xmax = -9, 0
+    ymin, ymax = -5, 3
+    X, Y = np.mgrid[xmin:xmax:200j, ymin:ymax:200j]
+    Z = np.reshape(kde(np.vstack([X.ravel(), Y.ravel()])).T, X.shape)
+
+    # Paleta de grises suavizada con bordes nítidos
+    ax.contourf(X, Y, Z, levels=niveles, cmap='Greys', alpha=0.85)
+    ax.contour(X, Y, Z, levels=niveles, colors='black', linewidths=0.4, alpha=0.5)
+
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    ax.set_title(titulo, pad=8, fontweight='bold')
+    ax.set_xlabel(r"Tiempo reescalado, $\log_{10} T$")
+    ax.set_ylabel(r"Distancia reescalada, $\log_{10} R$")
+    ax.grid(True)
     
-    COLOR_BARS = '#34495E'       # Gris pizarra elegante
-    COLOR_KDE = '#1F618D'        # Azul profundo para la curva KDE
-    COLOR_THRESHOLD = '#C0392B'  # Rojo carmesí para el umbral principal (-5)
-    COLOR_SEC_THRES = '#27AE60'  # Verde esmeralda para log10(eta) = 0
-    COLOR_CLUSTER_BG = '#FDEDEC' # Fondo rosado tenue para réplicas
-    COLOR_POISSON_BG = '#EAFAF1' # Fondo verde tenue para sismicidad de fondo
+    # Anotación con el número de eventos en el panel
+    ax.text(0.04, 0.93, f"$N = {n_events:,}$", transform=ax.transAxes,
+            fontsize=9, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='#cccccc', alpha=0.9))
 
-    fig, axes = plt.subplots(3, 1, figsize=(9, 10), sharex=True, dpi=300)
-    fig.patch.set_facecolor('white')
 
-    cutoffs = [2.0, 3.0, 4.0]
-    # AMPLIACIÓN DEL RANGO: De -12.0 a +3.0 en lugar de parar en 0.0
-    bins_edges = np.linspace(-12.0, 3.0, 55)
+# =============================================================================
+# 4. GENERACIÓN DE LA FIGURA 4 COMPLETA (4 PANELES)
+# =============================================================================
+def generar_figura_4_profesional(archivo_cat):
+    print(f"Cargando catálogo completo desde:\n -> {archivo_cat}")
+    df_raw = cargar_catalogo_scedc(archivo_cat)
+    
+    fecha_min = df_raw['datetime'].min().strftime('%Y-%m-%d')
+    fecha_max = df_raw['datetime'].max().strftime('%Y-%m-%d')
+    anio_min = df_raw['datetime'].dt.year.min()
+    anio_max = df_raw['datetime'].dt.year.max()
+    
+    print(f"Catálogo cargado con éxito. Total eventos: {len(df_raw):,}")
+    print(f"Rango de fechas detectado: {fecha_min} a {fecha_max} ({anio_min} - {anio_max})")
 
-    for idx, m_cut in enumerate(cutoffs):
-        ax = axes[idx]
-        ax.set_facecolor('#FAFAFA')
+    fig, axs = plt.subplots(2, 2, figsize=(11.5, 10.5))
+    fig.suptitle(f"Distribución Bimodal de Componentes Espacio-Temporales $(T, R)$\nCatálogo SCEDC ({anio_min} – {anio_max})", 
+                 fontweight='bold', y=0.98)
 
-        df_sub = df_base[df_base['mag'] >= m_cut]
-        data_eta = df_sub['log10_eta'].values
-        N_obs = len(data_eta)
+    # Línea diagonal de separación teórica: log10(T) + log10(R) = -5.0
+    x_line = np.linspace(-9, 0, 100)
+    y_line = -5.0 - x_line
 
-        # 3. Sombreado de los dos regímenes físicos hasta +3.2
-        ax.axvspan(-12.5, -5.0, color=COLOR_CLUSTER_BG, alpha=0.7, zorder=0)
-        ax.axvspan(-5.0, 3.5, color=COLOR_POISSON_BG, alpha=0.7, zorder=0)
+    # -------------------------------------------------------------------------
+    # Panel (a): m0 = 3.0, d = 1.6
+    # -------------------------------------------------------------------------
+    print("\nProcesando Panel (a): m0 = 3.0, d = 1.6...")
+    df_a, n_a = calcular_componentes_zaliapin(df_raw, b=1.0, d=1.6, m0=3.0)
+    graficar_panel_densidad(axs[0, 0], df_a, r"(a) $m_0 = 3.0,\ d = 1.6$", n_a)
+    linea_a, = axs[0, 0].plot(x_line, y_line, 'k-', linewidth=1.6, label=r"$\log_{10} \eta_0 = -5.0$")
+    axs[0, 0].legend(handles=[linea_a], loc='lower left', frameon=True, facecolor='white', framealpha=0.9, fontsize=9)
 
-        # 4. Histograma extendido sin truncar en 0
-        counts, bins, patches = ax.hist(
-            data_eta,
-            bins=bins_edges,
-            color=COLOR_BARS,
-            edgecolor='white',
-            linewidth=0.6,
-            alpha=0.85,
-            zorder=2
-        )
+    # -------------------------------------------------------------------------
+    # Panel (b): m0 = 5.0, d = 1.6 (Scatter Plot)
+    # -------------------------------------------------------------------------
+    print("Procesando Panel (b): m0 = 5.0, d = 1.6...")
+    df_b, n_b = calcular_componentes_zaliapin(df_raw, b=1.0, d=1.6, m0=5.0)
+    axs[0, 1].scatter(df_b['log10_T'], df_b['log10_R'], facecolors='none', edgecolors='#2b2b2b', 
+                      linewidths=0.8, alpha=0.8, s=28, label='Eventos ($M \ge 5.0$)')
+    axs[0, 1].plot(x_line, y_line, 'k-', linewidth=1.6)
+    axs[0, 1].set_xlim(-9, 0)
+    axs[0, 1].set_ylim(-5, 3)
+    axs[0, 1].set_title(r"(b) $m_0 = 5.0,\ d = 1.6$", pad=8, fontweight='bold')
+    axs[0, 1].set_xlabel(r"Tiempo reescalado, $\log_{10} T$")
+    axs[0, 1].set_ylabel(r"Distancia reescalada, $\log_{10} R$")
+    axs[0, 1].grid(True)
+    axs[0, 1].text(0.04, 0.93, f"$N = {n_b:,}$", transform=axs[0, 1].transAxes,
+                   fontsize=9, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='#cccccc', alpha=0.9))
 
-        # 5. Ajuste continuo por Estimación de Densidad Kernel (KDE) extendido
-        if len(data_eta) > 10:
-            kde = gaussian_kde(data_eta, bw_method='scott')
-            x_kde = np.linspace(-12.0, 3.0, 400)
-            y_kde = kde(x_kde) * len(data_eta) * (bins_edges[1] - bins_edges[0])
-            ax.plot(x_kde, y_kde, color=COLOR_KDE, lw=1.8, linestyle='-', zorder=3)
+    # -------------------------------------------------------------------------
+    # Panel (c): m0 = 3.0, d = 1.0
+    # -------------------------------------------------------------------------
+    print("Procesando Panel (c): m0 = 3.0, d = 1.0...")
+    df_c, n_c = calcular_componentes_zaliapin(df_raw, b=1.0, d=1.0, m0=3.0)
+    graficar_panel_densidad(axs[1, 0], df_c, r"(c) $m_0 = 3.0,\ d = 1.0$", n_c)
 
-        # 6. Umbral principal (log10 eta_0 = -5.0) y referencia log10 eta_0 = 0.0
-        ax.axvline(x=-5.0, color=COLOR_THRESHOLD, linestyle='--', linewidth=1.8, zorder=4)
-        ax.axvline(x=0.0, color=COLOR_SEC_THRES, linestyle=':', linewidth=1.4, zorder=4)
+    # -------------------------------------------------------------------------
+    # Panel (d): m0 = 3.0, d = 2.0
+    # -------------------------------------------------------------------------
+    print("Procesando Panel (d): m0 = 3.0, d = 2.0...")
+    df_d, n_d = calcular_componentes_zaliapin(df_raw, b=1.0, d=2.0, m0=3.0)
+    graficar_panel_densidad(axs[1, 1], df_d, r"(d) $m_0 = 3.0,\ d = 2.0$", n_d)
 
-        # 7. Tarjeta informativa con el tamaño de muestra N
-        badge_text = r'$m \geq ' + f'{int(m_cut)}' + r'$' + f'\n$N = {N_obs:,}$'
-        ax.text(
-            0.03, 0.72,
-            badge_text,
-            transform=ax.transAxes,
-            fontsize=10,
-            fontweight='bold',
-            va='top',
-            bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="#BDC3C7", lw=0.8, alpha=0.95),
-            zorder=5
-        )
-
-        # Etiquetado temático de regiones solo en el panel superior
-        if idx == 0:
-            max_y = max(counts)
-            ax.text(-8.5, max_y * 0.88, 'Población Agrupada\n(Réplicas / Enjambres)', 
-                    fontsize=9, fontweight='bold', color='#A93226', ha='center', zorder=5)
-            ax.text(-1.0, max_y * 0.88, 'Población Independiente\n(Sismicidad de Fondo)', 
-                    fontsize=9, fontweight='bold', color='#1E8449', ha='center', zorder=5)
-
-        # Formato de ejes
-        ax.set_ylabel('Número de eventos', fontsize=10, fontweight='bold', labelpad=8)
-        ax.grid(True, which='major', linestyle=':', color='#B0BEC5', alpha=0.6, zorder=1)
-        
-        # LÍMITE DEL EJE X AMPLIADO
-        ax.set_xlim(-12.5, 3.2)
-
-        # Ocultar espinas superior y derecha
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_color('#7F8C8D')
-        ax.spines['bottom'].set_color('#7F8C8D')
-
-    # Configuración del eje X global y título principal
-    axes[2].set_xlabel(r'Distancia al vecino más cercano, $\log_{10}\eta^*$', fontsize=11, fontweight='bold', labelpad=8)
-
-    fig.suptitle(
-        r'Figura 3: Distribución Bimodal de $\log_{10}\eta^*$ en Rango Ampliado $[-12, +3]$' + '\n' +
-        r'Catálogo del Sur de California (SCEDC) | Umbral de Corte $\log_{10}\eta_0 = -5.0$',
-        fontsize=12, fontweight='bold', color='#2C3E50', y=0.98
-    )
-
-    plt.subplots_adjust(hspace=0.18)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    
+    # Guardar gráfico en alta resolución (300 DPI)
+    output_filename = "figura_4_zaliapin_profesional.png"
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
-    print(f"[ÉXITO] Figura 3 ampliada guardada como '{output_filename}'")
-    plt.close()
+    print(f"\n¡Proceso completado! Figura guardada exitosamente como '{output_filename}'")
+    plt.show()
 
 
+# =============================================================================
+# BLOQUE PRINCIPAL DE EJECUCIÓN
+# =============================================================================
 if __name__ == "__main__":
-    path = buscar_archivo_catalogo()
-    if os.path.exists(path):
-        df_raw = cargar_catalogo_scedc(path)
-        generar_figura3_profesional_completa(df_raw)
+    archivo_cat = r"C:\Users\jorge\OneDrive\Desktop\TFG-Terremotos\TFG\Codigo\SearchResults.txt"
+    
+    if os.path.exists(archivo_cat):
+        generar_figura_4_profesional(archivo_cat)
     else:
-        print(f"[ERROR] No se encontró el catálogo en '{path}'.")
+        print(f"[ERROR] No se encuentra el archivo en la ruta:\n{archivo_cat}")
