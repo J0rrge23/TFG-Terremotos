@@ -30,7 +30,7 @@ plt.rcParams.update({
 
 
 # =============================================================================
-# 1. CARGA Y PARSEO COMPLETO DEL CATÁLOGO (TODOS LOS AÑOS)
+# 1. CARGA Y PARSEO COMPLETO DEL CATÁLOGO
 # =============================================================================
 def cargar_catalogo_scedc(filepath):
     """Parsea el archivo ASCII del catálogo SCEDC sin restringir fechas."""
@@ -65,21 +65,19 @@ def calcular_componentes_zaliapin(df, b=1.0, d=1.6, m0=3.0):
     if N < 2:
         return pd.DataFrame(), N
 
-    # Tiempo en años transcurridos desde el origen del catálogo
     t_start = df_sub['datetime'].iloc[0]
     tau_years = (df_sub['datetime'] - t_start).dt.total_seconds().values / (86400.0 * 365.25)
     mags = df_sub['mag'].values
     lats = df_sub['lat'].values
     lons = df_sub['lon'].values
 
-    # Coordenadas 3D cartesianas en esfera terrestre
     lat_rad = np.radians(lats)
     lon_rad = np.radians(lons)
     X = np.cos(lat_rad) * np.cos(lon_rad)
     Y = np.cos(lat_rad) * np.sin(lon_rad)
     Z = np.sin(lat_rad)
 
-    R_earth = 6371.0  # Radio de la Tierra en km
+    R_earth = 6371.0  # Radio terrestre en km
     mag_factor = 10.0 ** (-b * (mags - m0))
 
     log10_T = np.full(N, np.nan)
@@ -89,20 +87,17 @@ def calcular_componentes_zaliapin(df, b=1.0, d=1.6, m0=3.0):
         t_i = tau_years[i]
         dt = np.maximum(t_i - tau_years[:i], 1e-10)
 
-        # Distancia sobre la superficie terrestre (gran círculo)
         dx = X[i] - X[:i]
         dy = Y[i] - Y[:i]
         dz = Z[i] - Z[:i]
         chord = np.sqrt(np.maximum(dx*dx + dy*dy + dz*dz, 0.0))
         r = np.maximum(R_earth * 2.0 * np.arcsin(np.clip(chord / 2.0, 0.0, 1.0)), 1e-3)
 
-        # Métrica espacio-tiempo eta
         eta = dt * (r ** d) * mag_factor[:i]
 
         min_j = np.argmin(eta)
         best_mag_j = mags[min_j]
 
-        # Componentes reescaladas (Eq. 6 de Zaliapin et al., 2008)
         mag_factor_half = 10.0 ** (-0.5 * b * (best_mag_j - m0))
         best_T = dt[min_j] * mag_factor_half
         best_R = (r[min_j] ** d) * mag_factor_half
@@ -122,17 +117,14 @@ def graficar_panel_densidad(ax, df_tr, titulo, n_events, niveles=14):
     x = df_tr['log10_T'].values
     y = df_tr['log10_R'].values
 
-    # Estimación de densidad mediante KDE
     xy = np.vstack([x, y])
     kde = gaussian_kde(xy)
 
-    # Grilla de evaluación regular
     xmin, xmax = -9, 0
     ymin, ymax = -5, 3
     X, Y = np.mgrid[xmin:xmax:200j, ymin:ymax:200j]
     Z = np.reshape(kde(np.vstack([X.ravel(), Y.ravel()])).T, X.shape)
 
-    # Paleta de grises suavizada con bordes nítidos
     ax.contourf(X, Y, Z, levels=niveles, cmap='Greys', alpha=0.85)
     ax.contour(X, Y, Z, levels=niveles, colors='black', linewidths=0.4, alpha=0.5)
 
@@ -143,7 +135,6 @@ def graficar_panel_densidad(ax, df_tr, titulo, n_events, niveles=14):
     ax.set_ylabel(r"Distancia reescalada, $\log_{10} R$")
     ax.grid(True)
     
-    # Anotación con el número de eventos en el panel
     ax.text(0.04, 0.93, f"$N = {n_events:,}$", transform=ax.transAxes,
             fontsize=9, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='#cccccc', alpha=0.9))
 
@@ -151,7 +142,7 @@ def graficar_panel_densidad(ax, df_tr, titulo, n_events, niveles=14):
 # =============================================================================
 # 4. GENERACIÓN DE LA FIGURA 4 COMPLETA (4 PANELES)
 # =============================================================================
-def generar_figura_4_profesional(archivo_cat):
+def generar_figura_4_profesional(archivo_cat, log10_eta_0=-4.0):
     print(f"Cargando catálogo completo desde:\n -> {archivo_cat}")
     df_raw = cargar_catalogo_scedc(archivo_cat)
     
@@ -167,9 +158,11 @@ def generar_figura_4_profesional(archivo_cat):
     fig.suptitle(f"Distribución Bimodal de Componentes Espacio-Temporales $(T, R)$\nCatálogo SCEDC ({anio_min} – {anio_max})", 
                  fontweight='bold', y=0.98)
 
-    # Línea diagonal de separación teórica: log10(T) + log10(R) = -5.0
+    # Línea diagonal de separación corregida: log10(T) + log10(R) = log10(eta_0)
     x_line = np.linspace(-9, 0, 100)
-    y_line = -5.0 - x_line
+    y_line = log10_eta_0 - x_line
+
+    label_linea = rf"$\log_{{10}} \eta_0 = {log10_eta_0:.1f}$"
 
     # -------------------------------------------------------------------------
     # Panel (a): m0 = 3.0, d = 1.6
@@ -177,7 +170,7 @@ def generar_figura_4_profesional(archivo_cat):
     print("\nProcesando Panel (a): m0 = 3.0, d = 1.6...")
     df_a, n_a = calcular_componentes_zaliapin(df_raw, b=1.0, d=1.6, m0=3.0)
     graficar_panel_densidad(axs[0, 0], df_a, r"(a) $m_0 = 3.0,\ d = 1.6$", n_a)
-    linea_a, = axs[0, 0].plot(x_line, y_line, 'k-', linewidth=1.6, label=r"$\log_{10} \eta_0 = -5.0$")
+    linea_a, = axs[0, 0].plot(x_line, y_line, 'k-', linewidth=1.6, label=label_linea)
     axs[0, 0].legend(handles=[linea_a], loc='lower left', frameon=True, facecolor='white', framealpha=0.9, fontsize=9)
 
     # -------------------------------------------------------------------------
@@ -187,13 +180,14 @@ def generar_figura_4_profesional(archivo_cat):
     df_b, n_b = calcular_componentes_zaliapin(df_raw, b=1.0, d=1.6, m0=5.0)
     axs[0, 1].scatter(df_b['log10_T'], df_b['log10_R'], facecolors='none', edgecolors='#2b2b2b', 
                       linewidths=0.8, alpha=0.8, s=28, label='Eventos ($M \ge 5.0$)')
-    axs[0, 1].plot(x_line, y_line, 'k-', linewidth=1.6)
+    linea_b, = axs[0, 1].plot(x_line, y_line, 'k-', linewidth=1.6, label=label_linea)
     axs[0, 1].set_xlim(-9, 0)
     axs[0, 1].set_ylim(-5, 3)
     axs[0, 1].set_title(r"(b) $m_0 = 5.0,\ d = 1.6$", pad=8, fontweight='bold')
     axs[0, 1].set_xlabel(r"Tiempo reescalado, $\log_{10} T$")
     axs[0, 1].set_ylabel(r"Distancia reescalada, $\log_{10} R$")
     axs[0, 1].grid(True)
+    axs[0, 1].legend(loc='lower left', frameon=True, facecolor='white', framealpha=0.9, fontsize=9)
     axs[0, 1].text(0.04, 0.93, f"$N = {n_b:,}$", transform=axs[0, 1].transAxes,
                    fontsize=9, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='#cccccc', alpha=0.9))
 
@@ -203,6 +197,8 @@ def generar_figura_4_profesional(archivo_cat):
     print("Procesando Panel (c): m0 = 3.0, d = 1.0...")
     df_c, n_c = calcular_componentes_zaliapin(df_raw, b=1.0, d=1.0, m0=3.0)
     graficar_panel_densidad(axs[1, 0], df_c, r"(c) $m_0 = 3.0,\ d = 1.0$", n_c)
+    linea_c, = axs[1, 0].plot(x_line, y_line, 'k-', linewidth=1.6, label=label_linea)
+    axs[1, 0].legend(loc='lower left', frameon=True, facecolor='white', framealpha=0.9, fontsize=9)
 
     # -------------------------------------------------------------------------
     # Panel (d): m0 = 3.0, d = 2.0
@@ -210,10 +206,11 @@ def generar_figura_4_profesional(archivo_cat):
     print("Procesando Panel (d): m0 = 3.0, d = 2.0...")
     df_d, n_d = calcular_componentes_zaliapin(df_raw, b=1.0, d=2.0, m0=3.0)
     graficar_panel_densidad(axs[1, 1], df_d, r"(d) $m_0 = 3.0,\ d = 2.0$", n_d)
+    linea_d, = axs[1, 1].plot(x_line, y_line, 'k-', linewidth=1.6, label=label_linea)
+    axs[1, 1].legend(loc='lower left', frameon=True, facecolor='white', framealpha=0.9, fontsize=9)
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     
-    # Guardar gráfico en alta resolución (300 DPI)
     output_filename = "figura_4_zaliapin_profesional.png"
     plt.savefig(output_filename, dpi=300, bbox_inches='tight')
     print(f"\n¡Proceso completado! Figura guardada exitosamente como '{output_filename}'")
@@ -226,7 +223,8 @@ def generar_figura_4_profesional(archivo_cat):
 if __name__ == "__main__":
     archivo_cat = r"C:\Users\jorge\OneDrive\Desktop\TFG-Terremotos\TFG\Codigo\SearchResults.txt"
     
+    # Se ajusta log10_eta_0 = -4.0 para ubicar la línea en el mínimo entre ambas modas
     if os.path.exists(archivo_cat):
-        generar_figura_4_profesional(archivo_cat)
+        generar_figura_4_profesional(archivo_cat, log10_eta_0=-4.0)
     else:
         print(f"[ERROR] No se encuentra el archivo en la ruta:\n{archivo_cat}")
